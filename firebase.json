@@ -16,15 +16,32 @@
       "**/node_modules/**"
     ],
     "rewrites": [
-      { "source": "/api/hello", "function": { "functionId": "helloWorld", "region": "us-east4" } },
-      { "source": "**", "destination": "/index.html" }
+      {
+        "source": "/api/hello",
+        "function": {
+          "functionId": "helloWorld",
+          "region": "us-east4"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
     ]
   },
   "emulators": {
-    "functions": { "port": 5001 },
-    "firestore": { "port": 8080 },
-    "hosting": { "port": 5000 },
-    "ui": { "enabled": true }
+    "functions": {
+      "port": 5001
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true
   }
 }
-
