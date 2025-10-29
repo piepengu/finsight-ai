@@ -16,6 +16,7 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      { "source": "/api/hello", "function": { "functionId": "helloWorld", "region": "us-east4" } },
       { "source": "**", "destination": "/index.html" }
     ]
   },
