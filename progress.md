@@ -11,26 +11,41 @@
 - Opened PRs:
   - infra/firebase-init
   - feat/hello-world-function
-- Hosting emulator successfully served `public/` at `http://127.0.0.1:5000`.
+- **Deployed `helloWorld` function to cloud and tested successfully!**
+  - Function URL: `https://us-east4-finsight-ai-jd.cloudfunctions.net/helloWorld`
+  - Response: `{"ok": true, "message": "Hello from FinSight AI (us-east4)!"}`
 
 ## In Progress / Issues
-- Functions emulator not starting: CLI reports "No emulators to start" even after `firebase init emulators`.
-- Firestore emulator requires Java; JDK not yet installed (`java -version` missing).
+- Functions emulator not starting locally (CLI reports "No emulators to start").
+- Firestore emulator requires Java; JDK not yet installed.
+- **Workaround:** Using cloud-deployed functions for testing.
 
 ## Next Steps
-1. Fix Functions emulator start
-   - Re-run: `firebase init emulators` → ensure Functions + Hosting are selected; Emulator UI = Yes.
-   - Verify `firebase.json` contains `emulators.functions` and `emulators.hosting` (present).
-   - Start with debug to see root cause: `firebase --debug emulators:start --only functions`.
-   - Update CLI to latest: `npm i -g firebase-tools` (then re-try start).
-2. Optional: Enable Firestore emulator
-   - Install JDK 17 (Adoptium Temurin), ensure `java -version` works.
-   - Start all: `firebase emulators:start`.
-3. Unblock testing via cloud deploy (optional now)
-   - Deploy: `firebase deploy --only functions:helloWorld`
-   - Test URL: `https://us-east4-finsight-ai-jd.cloudfunctions.net/helloWorld`.
+1. **Get API keys** for:
+   - Alpha Vantage (stocks): https://www.alphavantage.co/support/#api-key
+   - CoinGecko (crypto): https://www.coingecko.com/en/api
+   - Google Gemini (AI): https://aistudio.google.com/app/apikey
+
+2. **Store API keys securely** (do NOT commit keys):
+   ```bash
+   firebase functions:config:set alpha.key="YOUR_KEY" coingecko.key="YOUR_KEY" gemini.key="YOUR_KEY"
+   ```
+
+3. **Build `getDailyBriefing` function** that:
+   - Fetches S&P 500 data from Alpha Vantage
+   - Fetches BTC/ETH prices from CoinGecko
+   - Sends data to Gemini for AI summary
+   - Returns JSON to the frontend
+
+4. **Update frontend** to call `/api/briefing` and display the AI response
+
+5. **Optional: Fix local emulators**
+   - Install JDK 17 (Adoptium Temurin) for Firestore emulator
+   - Debug Functions emulator startup issue
 
 ## Notes
-- Ports 5000/5001/4000 are free; Hosting emulator runs fine.
-- Some earlier commands showed "Command was interrupted"—open a fresh terminal and re-run to avoid partial starts.
+- Cloud deployment is working; can test functions immediately at production URLs.
+- Ports 5000/5001/4000 are free; Hosting emulator runs fine standalone.
+- Node 20 runtime; using CommonJS for simplicity.
+
 
