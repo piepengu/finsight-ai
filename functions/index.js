@@ -2,7 +2,6 @@ const { onRequest } = require('firebase-functions/v2/https');
 const logger = require('firebase-functions/logger');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const functions = require('firebase-functions');
 
 exports.helloWorld = onRequest({ region: 'us-east4', cors: true }, (req, res) => {
   logger.info('helloWorld invoked', { method: req.method, path: req.path });
@@ -13,12 +12,13 @@ exports.getDailyBriefing = onRequest({ region: 'us-east4', cors: true }, async (
   logger.info('getDailyBriefing invoked');
   
   try {
-    const config = functions.config();
-    const alphaKey = config.alpha?.key;
-    const geminiKey = config.gemini?.key;
+    // Use environment variables with fallback to hardcoded values for now
+    // TODO: Migrate to proper secrets management
+    const alphaKeyValue = process.env.ALPHA_KEY || 'Y35R43GW6L6NOWND';
+    const geminiKeyValue = process.env.GEMINI_KEY || 'AIzaSyCGdaXhDvBbMepphspkVSttmDEvaQnu8xE';
 
-    if (!alphaKey || !geminiKey) {
-      logger.error('Missing API keys', { hasAlpha: !!alphaKey, hasGemini: !!geminiKey });
+    if (!alphaKeyValue || !geminiKeyValue) {
+      logger.error('Missing API keys', { hasAlpha: !!alphaKeyValue, hasGemini: !!geminiKeyValue });
       return res.status(500).json({ error: 'API keys not configured' });
     }
 
@@ -29,7 +29,7 @@ exports.getDailyBriefing = onRequest({ region: 'us-east4', cors: true }, async (
         params: {
           function: 'GLOBAL_QUOTE',
           symbol: 'SPY',
-          apikey: alphaKey
+          apikey: alphaKeyValue
         }
       });
       
@@ -90,7 +90,7 @@ exports.getDailyBriefing = onRequest({ region: 'us-east4', cors: true }, async (
     // Generate AI summary using Gemini
     let aiSummary = 'Unable to generate summary at this time.';
     try {
-      const genAI = new GoogleGenerativeAI(geminiKey);
+      const genAI = new GoogleGenerativeAI(geminiKeyValue);
       const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
       const prompt = `You are a financial education assistant for young investors. Provide a brief, educational summary (2-3 sentences) of today's market movements:
