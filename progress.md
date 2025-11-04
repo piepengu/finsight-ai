@@ -7,39 +7,53 @@
 - Added Firebase config to repo: `.firebaserc`, `firebase.json`, `firestore.rules`, `firestore.indexes.json`.
 - Scaffolded Cloud Functions (Node 20, CommonJS, v2): `functions/package.json`, deps installed.
 - Implemented `helloWorld` function in `us-east4` and Hosting rewrite to `/api/hello`.
-- Updated frontend (`public/index.html`, `public/app.js`) with a test button to call `/api/hello`.
-- Opened PRs:
-  - infra/firebase-init
-  - feat/hello-world-function
 - **Deployed `helloWorld` function to cloud and tested successfully!**
   - Function URL: `https://us-east4-finsight-ai-jd.cloudfunctions.net/helloWorld`
-  - Response: `{"ok": true, "message": "Hello from FinSight AI (us-east4)!"}`
+- **✅ API Keys stored securely:**
+  - Alpha Vantage: Configured in Firebase Functions config
+  - CoinGecko: Using public API (no key needed)
+  - Google Gemini: Configured in Firebase Functions config
+- **✅ Built `getDailyBriefing` function:**
+  - Fetches S&P 500 (SPY) data from Alpha Vantage
+  - Fetches BTC/ETH prices from CoinGecko public API
+  - Generates AI summary using Gemini
+  - Returns structured JSON response
+- **✅ Updated frontend:**
+  - Beautiful UI for displaying daily briefing
+  - Shows S&P 500, Bitcoin, Ethereum prices with color-coded changes
+  - Displays AI-generated summary in friendly format
+  - Hosting rewrite configured for `/api/briefing`
+- **✅ Deployed to production:**
+  - Function: `getDailyBriefing` deployed to `us-east4`
+  - Hosting deployed and live
+  - Live URL: https://finsight-ai-jd.web.app
+  - Function URL: https://us-east4-finsight-ai-jd.cloudfunctions.net/getDailyBriefing
 
 ## In Progress / Issues
 - Functions emulator not starting locally (CLI reports "No emulators to start").
 - Firestore emulator requires Java; JDK not yet installed.
 - **Workaround:** Using cloud-deployed functions for testing.
 
+## API Keys Status
+- ✅ **Alpha Vantage** - Stored securely in Firebase Functions config
+- ✅ **CoinGecko** - Using public API (no key required, rate-limited)
+- ✅ **Google Gemini** - Stored securely in Firebase Functions config
+
 ## Next Steps
-1. **Get API keys** for:
-   - Alpha Vantage (stocks): https://www.alphavantage.co/support/#api-key
-   - CoinGecko (crypto): https://www.coingecko.com/en/api
-   - Google Gemini (AI): https://aistudio.google.com/app/apikey
+1. **✅ Test the live app:**
+   - Visit: https://finsight-ai-jd.web.app
+   - Click "Get Today's Briefing"
+   - Verify S&P 500, BTC, ETH data loads correctly
+   - Verify AI summary displays properly
 
-2. **Store API keys securely** (do NOT commit keys):
-   ```bash
-   firebase functions:config:set alpha.key="YOUR_KEY" coingecko.key="YOUR_KEY" gemini.key="YOUR_KEY"
-   ```
+2. **Future enhancements:**
+   - Add error handling for API failures
+   - Add caching to reduce API calls and costs
+   - Add loading states and retry logic
+   - Consider scheduled function for daily auto-generation
+   - Add data visualization (charts/graphs)
 
-3. **Build `getDailyBriefing` function** that:
-   - Fetches S&P 500 data from Alpha Vantage
-   - Fetches BTC/ETH prices from CoinGecko
-   - Sends data to Gemini for AI summary
-   - Returns JSON to the frontend
-
-4. **Update frontend** to call `/api/briefing` and display the AI response
-
-5. **Optional: Fix local emulators**
+3. **Optional: Fix local emulators**
    - Install JDK 17 (Adoptium Temurin) for Firestore emulator
    - Debug Functions emulator startup issue
 
