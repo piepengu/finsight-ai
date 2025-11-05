@@ -24,6 +24,13 @@
         }
       },
       {
+        "source": "/api/briefing",
+        "function": {
+          "functionId": "getDailyBriefing",
+          "region": "us-east4"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
