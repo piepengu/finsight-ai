@@ -14,7 +14,7 @@ exports.getDailyBriefing = onRequest({ region: 'us-east4', cors: true }, async (
     // Use environment variables with fallback to hardcoded values for now
     // TODO: Migrate to proper secrets management
     const alphaKeyValue = process.env.ALPHA_KEY || 'Y35R43GW6L6NOWND';
-    const geminiKeyValue = process.env.GEMINI_KEY || 'AIzaSyCGdaXhDvBbMepphspkVSttmDEvaQnu8xE';
+    const geminiKeyValue = process.env.GEMINI_KEY || 'AIzaSyAR0cUEIWvD1f6UIHC0zCPz9YoUg-VQaKI';
 
     if (!alphaKeyValue || !geminiKeyValue) {
       logger.error('Missing API keys', { hasAlpha: !!alphaKeyValue, hasGemini: !!geminiKeyValue });
