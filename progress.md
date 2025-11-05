@@ -215,25 +215,40 @@ finsight-ai/
    - Style with CSS (match existing design)
 
 3. **Task 3: Secure Trading Functions**
+   - Create `initializeAccount` Cloud Function (or do this in `buyStock`):
+     - Check if `users/{userId}/account` exists
+     - If not, create with `balance: 10000.00`, `totalInvested: 0.00`
    - Create `buyStock` Cloud Function:
      - Verify user is authenticated
+     - Initialize account if doesn't exist (set starting balance to $10,000)
+     - Validate user has sufficient balance
      - Fetch current stock price (use Alpha Vantage API - key already configured)
-     - Calculate total cost
+     - Calculate total cost (shares × price)
+     - Update user balance: `balance -= totalCost`
+     - Update/merge portfolio holdings (handle existing positions)
+     - Calculate average price if adding to existing position
      - Write to Firestore: `users/{userId}/portfolio/{stockSymbol}`
-     - Return success/error
+     - Return success with updated balance
    - Create `sellStock` Cloud Function:
      - Verify user is authenticated
-     - Check user has enough shares
+     - Check user has enough shares in portfolio
      - Fetch current stock price
-     - Calculate proceeds
-     - Update Firestore holdings
-     - Return success/error
+     - Calculate proceeds (shares × currentPrice)
+     - Update user balance: `balance += proceeds`
+     - Update portfolio (reduce shares or remove if selling all)
+     - Calculate P&L (proceeds - originalCost)
+     - Return success with updated balance and P&L
 
 4. **Task 4: Display Portfolio Data**
    - Add Firestore real-time listener in `app.js`
-   - Listen to `users/{userId}/portfolio` collection
+   - Listen to `users/{userId}/account` for balance updates
+   - Listen to `users/{userId}/portfolio` collection for holdings
    - Update UI when holdings change
-   - Show current value, P&L, etc.
+   - Display:
+     - Current cash balance
+     - Portfolio holdings table (symbol, shares, avg price, current price, P&L)
+     - Total portfolio value (cash + holdings value)
+     - Overall P&L (portfolio value - $10,000 starting capital)
 
 ### Step 5: Development Workflow
 
@@ -271,18 +286,36 @@ finsight-ai/
 
 ### Step 6: Important Notes
 
+**Starting Capital (Simulator Money):**
+- **Each user starts with $10,000 in virtual money**
+- This is a one-time setup when the user first logs in
+- Store in Firestore under `users/{userId}/account`
+- Balance decreases when buying stocks, increases when selling
+
 **Firestore Structure:**
-- Use this structure for user portfolios:
+- Use this structure for user accounts and portfolios:
   ```
   users/
     {userId}/
+      account/
+        balance: 10000.00          # Starting virtual money
+        totalInvested: 0.00         # Total amount spent on stocks
+        createdAt: timestamp        # When account was created
       portfolio/
-        {stockSymbol}/
-          shares: number
-          avgPrice: number
+        {stockSymbol}/              # e.g., "AAPL", "MSFT"
+          shares: number            # Number of shares owned
+          avgPrice: number          # Average purchase price per share
+          totalCost: number         # Total amount spent on this stock
           firstPurchased: timestamp
           lastUpdated: timestamp
   ```
+
+**Example Flow:**
+1. User signs in → Check if `users/{userId}/account` exists
+2. If not, create account with `balance: 10000.00`
+3. When buying: `balance -= (shares * currentPrice)`, update portfolio
+4. When selling: `balance += (shares * currentPrice)`, update portfolio
+5. Display: Current balance, portfolio value, total P&L
 
 **Security Rules:**
 - You'll need to update `firestore.rules` to allow authenticated users to read/write their own data:
@@ -307,12 +340,22 @@ finsight-ai/
 Before creating PR:
 - [ ] User can sign in with Google
 - [ ] User can sign out
-- [ ] Buy form validates input
+- [ ] Account initialized with $10,000 on first login
+- [ ] Account balance displays correctly
+- [ ] Buy form validates input (symbol, quantity)
+- [ ] Buy validates sufficient balance
 - [ ] Buy function fetches real price and updates Firestore
+- [ ] Balance decreases correctly after purchase
+- [ ] Portfolio shows new holdings after purchase
+- [ ] Buying same stock again updates average price correctly
+- [ ] Sell form validates user has enough shares
 - [ ] Sell function checks holdings and updates Firestore
-- [ ] Portfolio table displays holdings correctly
-- [ ] Real-time updates work (add shares, see table update)
-- [ ] Error handling works (invalid symbol, insufficient shares, etc.)
+- [ ] Balance increases correctly after sale
+- [ ] Portfolio table displays holdings correctly (symbol, shares, avg price, current price, P&L)
+- [ ] Real-time updates work (add shares, see table update instantly)
+- [ ] Total portfolio value calculates correctly (cash + holdings)
+- [ ] Overall P&L displays correctly (vs $10,000 starting capital)
+- [ ] Error handling works (invalid symbol, insufficient balance, insufficient shares, etc.)
 
 ### Step 8: Questions?
 
