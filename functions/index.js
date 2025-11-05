@@ -1,7 +1,6 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const logger = require('firebase-functions/logger');
 const axios = require('axios');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 exports.helloWorld = onRequest({ region: 'us-east4', cors: true }, (req, res) => {
   logger.info('helloWorld invoked', { method: req.method, path: req.path });
@@ -87,12 +86,9 @@ exports.getDailyBriefing = onRequest({ region: 'us-east4', cors: true }, async (
       crypto: cryptoData
     };
 
-    // Generate AI summary using Gemini
+    // Generate AI summary using Gemini REST API directly
     let aiSummary = 'Unable to generate summary at this time.';
     try {
-      const genAI = new GoogleGenerativeAI(geminiKeyValue);
-      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
       const prompt = `You are a financial education assistant for young investors. Provide a brief, educational summary (2-3 sentences) of today's market movements:
 
 S&P 500 (SPY): ${sp500Data ? `$${sp500Data.price.toFixed(2)} (${sp500Data.changePercent > 0 ? '+' : ''}${sp500Data.changePercent.toFixed(2)}%)` : 'Data unavailable'}
@@ -101,12 +97,109 @@ Ethereum: ${cryptoData ? `$${cryptoData.eth.price.toLocaleString()} (${cryptoDat
 
 Explain what these movements mean in simple terms for beginners. Keep it educational and encouraging.`;
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      aiSummary = response.text();
-      logger.info('Gemini summary generated', { length: aiSummary.length });
+      // First, try to get available models to find one that works
+      let modelName = null;
+      const retiredPreviewModels = [
+        'gemini-2.0-flash-lite-preview',
+        'gemini-2.0-flash-lite-preview-02-05',
+        'gemini-2.0-flash-thinking-exp',
+        'gemini-2.0-flash-thinking-exp-01-21',
+        'gemini-2.0-flash-thinking-exp-1219',
+        'gemini-2.5-flash-lite-preview-06-17',
+        'gemini-2.5-flash-preview-05-20',
+        'gemini-2.5-pro-preview-06-05',
+        'gemini-2.5-pro-preview-03-25',
+        'gemini-2.5-pro-preview-05-06'
+      ];
+      
+      try {
+        const modelsResponse = await axios.get(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKeyValue}`
+        );
+        
+        if (modelsResponse.data?.models) {
+          // Find a model that supports generateContent, prioritizing stable (non-preview) models
+          const availableModels = modelsResponse.data.models.filter(
+            (m) => m.supportedGenerationMethods?.includes('generateContent') &&
+                   !retiredPreviewModels.some(retired => m.name.includes(retired))
+          );
+          
+          // Prioritize stable models over preview models
+          const stableModel = availableModels.find(m => !m.name.includes('preview'));
+          const previewModel = availableModels.find(m => m.name.includes('preview'));
+          
+          const selectedModel = stableModel || previewModel;
+          if (selectedModel) {
+            modelName = selectedModel.name.replace('models/', '');
+            logger.info('Found available model', { model: modelName, isStable: !!stableModel });
+          }
+        }
+      } catch (listError) {
+        logger.warn('Could not list models, will try default', { error: listError.message });
+      }
+
+      // Try common model names in order of preference
+      // Prioritize stable (non-preview) models per Google's recommendation
+      const modelNamesToTry = modelName 
+        ? [modelName] 
+        : [
+            'gemini-2.5-flash',           // Stable Flash model
+            'gemini-2.5-pro',             // Stable Pro model
+            'gemini-2.5-flash-lite',      // Stable Flash Lite
+            'gemini-2.5-flash-preview-09-2025',  // New preview (not retired)
+            'gemini-2.5-flash-lite-preview-09-2025', // New preview (not retired)
+            'gemini-1.5-flash',           // Fallback
+            'gemini-1.5-pro',             // Fallback
+            'gemini-pro'                   // Legacy fallback
+          ];
+      
+      let lastError = null;
+      for (const tryModel of modelNamesToTry) {
+        try {
+          logger.info('Trying Gemini model', { model: tryModel });
+          const geminiResponse = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/${tryModel}:generateContent?key=${geminiKeyValue}`,
+            {
+              contents: [{
+                parts: [{
+                  text: prompt
+                }]
+              }]
+            },
+            {
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+
+          if (geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+            aiSummary = geminiResponse.data.candidates[0].content.parts[0].text;
+            logger.info('Gemini summary generated via REST API', { model: tryModel, length: aiSummary.length });
+            break; // Success, exit loop
+          } else {
+            logger.warn('Unexpected Gemini API response format', { model: tryModel, data: geminiResponse.data });
+          }
+        } catch (error) {
+          lastError = error;
+          logger.warn('Model failed, trying next', { model: tryModel, error: error.response?.data?.error?.message || error.message });
+          continue; // Try next model
+        }
+      }
+
+      if (!aiSummary || aiSummary === 'Unable to generate summary at this time.') {
+        throw lastError || new Error('All model attempts failed');
+      }
     } catch (error) {
-      logger.error('Gemini API error', { error: error.message });
+      logger.error('Gemini API error', { error: error.message, stack: error.stack, response: error.response?.data });
+      
+      // Check for quota/rate limit errors
+      const errorMessage = error.response?.data?.error?.message || error.message;
+      if (errorMessage.includes('quota') || errorMessage.includes('Quota exceeded')) {
+        aiSummary = '⚠️ Gemini API quota exceeded. Please check your API key quota limits or wait a moment and try again. Market data is still available above.';
+      } else {
+        aiSummary = `Unable to generate AI summary: ${errorMessage}`;
+      }
     }
 
     // Return comprehensive response
