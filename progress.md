@@ -106,4 +106,229 @@
 - **Model Priority:** `gemini-2.5-flash` → `gemini-2.5-pro` → `gemini-1.5-flash` → others
 - **Error Handling:** Comprehensive error logging and user-friendly messages
 
+---
+
+## For Daniel: Phase 3 Setup Instructions
+
+### Step 1: Clone and Setup Repository
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/piepengu/finsight-ai.git
+   cd finsight-ai
+   ```
+
+2. **Checkout main branch (after Phase 2 is merged):**
+   ```bash
+   git checkout main
+   git pull origin main
+   ```
+
+   **OR if Phase 2 is still on `feat/daily-briefing` branch:**
+   ```bash
+   git checkout feat/daily-briefing
+   git pull origin feat/daily-briefing
+   ```
+
+3. **Verify you're on the correct commit:**
+   ```bash
+   git log --oneline -5
+   ```
+   You should see commits related to `getDailyBriefing` function.
+
+4. **Create your feature branch for Phase 3:**
+   ```bash
+   git checkout -b feat/portfolio-simulator
+   ```
+
+### Step 2: Install Dependencies
+
+1. **Install Firebase CLI (if not already installed):**
+   ```bash
+   npm install -g firebase-tools
+   ```
+
+2. **Install function dependencies:**
+   ```bash
+   cd functions
+   npm install
+   cd ..
+   ```
+
+3. **Login to Firebase:**
+   ```bash
+   firebase login
+   ```
+
+4. **Link to the Firebase project:**
+   ```bash
+   firebase use finsight-ai-jd
+   ```
+
+### Step 3: Understand Current State
+
+**What's Working:**
+- ✅ Daily Briefing feature (`getDailyBriefing` function)
+- ✅ Frontend displays market data (S&P 500, Bitcoin, Ethereum)
+- ✅ AI summary generation (Gemini API)
+- ✅ Firebase Hosting and Functions deployed
+
+**Key Files:**
+- `functions/index.js` - Cloud Functions (contains `helloWorld` and `getDailyBriefing`)
+- `public/index.html` - Frontend HTML
+- `public/app.js` - Frontend JavaScript
+- `firebase.json` - Firebase configuration
+- `.firebaserc` - Firebase project linking
+
+**Project Structure:**
+```
+finsight-ai/
+├── functions/
+│   ├── index.js          # Cloud Functions code
+│   ├── package.json      # Function dependencies
+│   └── node_modules/     # Installed packages
+├── public/
+│   ├── index.html        # Frontend HTML
+│   ├── app.js            # Frontend JavaScript
+│   └── styles.css         # Frontend styles
+├── firebase.json         # Firebase config
+├── .firebaserc           # Firebase project link
+└── firestore.rules       # Firestore security rules
+```
+
+### Step 4: Phase 3 Tasks Overview
+
+**Your goal:** Build a Portfolio Simulator where users can buy/sell stocks and track their virtual portfolio.
+
+**Tasks:**
+
+1. **Task 1: Firebase Authentication**
+   - Enable Firebase Authentication in Firebase Console
+   - Add Google Sign-In provider
+   - Update frontend to show login/logout buttons
+   - Store user auth state
+
+2. **Task 2: Build Portfolio UI**
+   - Add HTML sections for:
+     - Buy/Sell form (stock symbol, quantity, buy/sell button)
+     - Portfolio holdings table (show current positions)
+   - Style with CSS (match existing design)
+
+3. **Task 3: Secure Trading Functions**
+   - Create `buyStock` Cloud Function:
+     - Verify user is authenticated
+     - Fetch current stock price (use Alpha Vantage API - key already configured)
+     - Calculate total cost
+     - Write to Firestore: `users/{userId}/portfolio/{stockSymbol}`
+     - Return success/error
+   - Create `sellStock` Cloud Function:
+     - Verify user is authenticated
+     - Check user has enough shares
+     - Fetch current stock price
+     - Calculate proceeds
+     - Update Firestore holdings
+     - Return success/error
+
+4. **Task 4: Display Portfolio Data**
+   - Add Firestore real-time listener in `app.js`
+   - Listen to `users/{userId}/portfolio` collection
+   - Update UI when holdings change
+   - Show current value, P&L, etc.
+
+### Step 5: Development Workflow
+
+**For each task:**
+
+1. **Create a feature branch:**
+   ```bash
+   git checkout -b feat/authentication  # Example for Task 1
+   ```
+
+2. **Make changes:**
+   - Edit files as needed
+   - Test locally (if possible) or deploy to test
+
+3. **Test your changes:**
+   ```bash
+   # Deploy function to test
+   firebase deploy --only functions:buyStock
+   
+   # Deploy hosting to test frontend
+   firebase deploy --only hosting
+   ```
+
+4. **Commit and push:**
+   ```bash
+   git add .
+   git commit -m "feat: add Firebase Authentication"
+   git push -u origin feat/authentication
+   ```
+
+5. **Create Pull Request on GitHub:**
+   - Go to GitHub repo
+   - Create PR from your branch to `main`
+   - Request review from @piepengu
+
+### Step 6: Important Notes
+
+**Firestore Structure:**
+- Use this structure for user portfolios:
+  ```
+  users/
+    {userId}/
+      portfolio/
+        {stockSymbol}/
+          shares: number
+          avgPrice: number
+          firstPurchased: timestamp
+          lastUpdated: timestamp
+  ```
+
+**Security Rules:**
+- You'll need to update `firestore.rules` to allow authenticated users to read/write their own data:
+  ```javascript
+  match /users/{userId}/{document=**} {
+    allow read, write: if request.auth != null && request.auth.uid == userId;
+  }
+  ```
+
+**API Keys:**
+- Alpha Vantage key is already configured: `Y35R43GW6L6NOWND`
+- Use it in your `buyStock`/`sellStock` functions to fetch real-time prices
+- Same API endpoint as `getDailyBriefing`: `https://www.alphavantage.co/query`
+
+**Function Naming:**
+- Follow existing pattern: `exports.buyStock = onRequest(...)`
+- Use same region: `{ region: 'us-east4', cors: true }`
+- Add to `firebase.json` rewrites if needed
+
+### Step 7: Testing Checklist
+
+Before creating PR:
+- [ ] User can sign in with Google
+- [ ] User can sign out
+- [ ] Buy form validates input
+- [ ] Buy function fetches real price and updates Firestore
+- [ ] Sell function checks holdings and updates Firestore
+- [ ] Portfolio table displays holdings correctly
+- [ ] Real-time updates work (add shares, see table update)
+- [ ] Error handling works (invalid symbol, insufficient shares, etc.)
+
+### Step 8: Questions?
+
+If you get stuck:
+1. Check Firebase logs: `firebase functions:log`
+2. Check browser console for frontend errors
+3. Review existing `getDailyBriefing` function as reference
+4. Ask @piepengu for help
+
+### Step 9: Reference Links
+
+- **Firebase Auth Docs:** https://firebase.google.com/docs/auth/web/google-signin
+- **Firestore Docs:** https://firebase.google.com/docs/firestore
+- **Alpha Vantage API:** https://www.alphavantage.co/documentation/
+- **Firebase Functions v2:** https://firebase.google.com/docs/functions/get-started
+
+**Good luck! 🚀**
+
 
