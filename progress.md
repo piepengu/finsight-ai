@@ -10,9 +10,9 @@
 - **Deployed `helloWorld` function to cloud and tested successfully!**
   - Function URL: `https://us-east4-finsight-ai-jd.cloudfunctions.net/helloWorld`
 - **✅ API Keys obtained and configured:**
-  - Alpha Vantage: `Y35R43GW6L6NOWND` (stored securely via process.env)
+  - Alpha Vantage: Stored securely via Firebase Functions secrets
   - CoinGecko: Using public API (no key needed)
-  - Google Gemini: API key stored securely via process.env
+  - Google Gemini: Stored securely via Firebase Functions secrets
 - **✅ Built `getDailyBriefing` function:**
   - Fetches S&P 500 (SPY) data from Alpha Vantage ✅ **Working perfectly**
   - Fetches BTC/ETH prices from CoinGecko public API ✅ **Working perfectly**
@@ -355,8 +355,8 @@ finsight-ai/
   ```
 
 **API Keys:**
-- Alpha Vantage key is already configured: `Y35R43GW6L6NOWND`
-- Use it in your `buyStock`/`sellStock` functions to fetch real-time prices
+- Alpha Vantage key is stored securely via Firebase Functions secrets
+- Use `alphaKey.value()` in your `buyStock`/`sellStock` functions to fetch real-time prices
 - Same API endpoint as `getDailyBriefing`: `https://www.alphavantage.co/query`
 
 **Function Naming:**
