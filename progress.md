@@ -73,19 +73,45 @@
    - Prioritizes `gemini-2.5-flash` (10 RPM, 250 RPD) over `gemini-2.5-pro` (2 RPM, 50 RPD)
    - Perfect for daily briefing use case (1 request/day)
 
-## Next Steps (Tomorrow)
-1. **Test again after quota reset:**
-   - Visit: https://finsight-ai-jd.web.app
-   - Click "Get Today's Briefing"
-   - Verify AI summary generates successfully with `gemini-2.5-flash`
+## Latest Updates (Option 1 Enhancements - Completed)
+
+### ✅ Caching System Implemented
+- **Stock Price Caching:** 5-minute cache in Firestore to reduce Alpha Vantage API calls
+- **Daily Briefing Caching:** 1-hour cache to reduce Gemini API calls
+- **Magnificent 7 Caching:** 5-minute cache with fallback to stale cache on rate limits
+- **Smart Fallback:** Returns cached data (even if stale) when API rate limits are hit
+
+### ✅ Portfolio Simulator Features
+- **Firebase Authentication:** Google Sign-In integrated
+- **User Accounts:** Auto-initialized with $10,000 starting balance
+- **Buy/Sell Stocks:** Real-time trading with Alpha Vantage price fetching
+- **Portfolio Tracking:** Real-time Firestore listeners for balance and holdings
+- **Transaction History:** Complete audit trail of all buy/sell actions
+- **P&L Calculation:** Real-time profit/loss tracking per stock and overall portfolio
+
+### ✅ UX Improvements
+- **Loading States:** Visual feedback during buy/sell operations
+- **Success Animations:** Slide-in animations for successful trades
+- **Error Handling:** Clear error messages with auto-dismiss
+- **Transaction History Table:** Shows last 50 transactions with date, type, symbol, shares, price, total
+- **Cached Data Indicators:** Shows when data is from cache
+
+### ✅ Security & Performance
+- **Firebase Secrets:** API keys stored securely using Firebase Functions secrets
+- **Firestore Security Rules:** Users can only access their own data
+- **Cache Collection:** Read-only for authenticated users, write-only by functions
+- **Rate Limit Handling:** Graceful degradation with cached data fallback
+
+## Next Steps
+1. **Portfolio Performance Charts (Pending):**
+   - Add visual charts showing portfolio value over time
+   - Historical performance tracking
 
 2. **Future enhancements:**
-   - Add caching to reduce API calls (cache briefing for X hours)
    - Add retry logic with exponential backoff for rate limits
-   - Add loading states and better UX feedback
    - Consider scheduled function for daily auto-generation
-   - Add data visualization (charts/graphs)
-   - Add error recovery for individual API failures
+   - Add more data visualization (charts/graphs)
+   - Add watchlist feature
 
 3. **Optional: Fix local emulators**
    - Install JDK 17 (Adoptium Temurin) for Firestore emulator
@@ -101,10 +127,13 @@
 
 ## Technical Details
 - **Functions v2:** Using `onRequest` from `firebase-functions/v2/https`
-- **API Keys:** Stored via `process.env` (hardcoded fallbacks for now, TODO: migrate to secrets)
+- **API Keys:** Stored securely via Firebase Functions secrets (`defineSecret`)
 - **Gemini Integration:** Direct REST API calls to `generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
 - **Model Priority:** `gemini-2.5-flash` → `gemini-2.5-pro` → `gemini-1.5-flash` → others
 - **Error Handling:** Comprehensive error logging and user-friendly messages
+- **Caching:** Firestore-based caching for stock prices (5 min), daily briefing (1 hour), Magnificent 7 (5 min)
+- **Real-time Updates:** Firestore `onSnapshot` listeners for portfolio and transaction updates
+- **Authentication:** Firebase Auth with Google Sign-In provider
 
 ---
 

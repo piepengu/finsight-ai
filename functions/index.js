@@ -1,20 +1,54 @@
 const { onRequest } = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
 const logger = require('firebase-functions/logger');
 const axios = require('axios');
+const admin = require('firebase-admin');
+
+// Initialize Firebase Admin
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+const db = admin.firestore();
+
+// Define secrets for secure API key storage
+const geminiKey = defineSecret('GEMINI_KEY');
+const alphaKey = defineSecret('ALPHA_KEY');
 
 exports.helloWorld = onRequest({ region: 'us-east4', cors: true }, (req, res) => {
   logger.info('helloWorld invoked', { method: req.method, path: req.path });
   res.json({ ok: true, message: 'Hello from FinSight AI (us-east4)!' });
 });
 
-exports.getDailyBriefing = onRequest({ region: 'us-east4', cors: true }, async (req, res) => {
-  logger.info('getDailyBriefing invoked');
-  
-  try {
-    // Use environment variables with fallback to hardcoded values for now
-    // TODO: Migrate to proper secrets management
-    const alphaKeyValue = process.env.ALPHA_KEY || 'Y35R43GW6L6NOWND';
-    const geminiKeyValue = process.env.GEMINI_KEY || 'AIzaSyAR0cUEIWvD1f6UIHC0zCPz9YoUg-VQaKI';
+exports.getDailyBriefing = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true,
+    secrets: [geminiKey, alphaKey]
+  }, 
+  async (req, res) => {
+    logger.info('getDailyBriefing invoked');
+    
+    try {
+      // Check cache first (cache for 1 hour)
+      const today = new Date().toISOString().split('T')[0];
+      const cacheKey = `daily_briefing_${today}`;
+      const cacheRef = db.collection('cache').doc(cacheKey);
+      const cacheDoc = await cacheRef.get();
+      
+      if (cacheDoc.exists) {
+        const cachedData = cacheDoc.data();
+        const cacheAge = Date.now() - cachedData.timestamp.toMillis();
+        const oneHour = 60 * 60 * 1000;
+        
+        if (cacheAge < oneHour) {
+          logger.info('Returning cached daily briefing', { age: Math.round(cacheAge / 1000 / 60) + ' minutes' });
+          return res.json(cachedData.data);
+        }
+      }
+
+      // Get API keys from secrets
+      const alphaKeyValue = alphaKey.value();
+      const geminiKeyValue = geminiKey.value();
 
     if (!alphaKeyValue || !geminiKeyValue) {
       logger.error('Missing API keys', { hasAlpha: !!alphaKeyValue, hasGemini: !!geminiKeyValue });
@@ -202,19 +236,511 @@ Explain what these movements mean in simple terms for beginners. Keep it educati
       }
     }
 
-    // Return comprehensive response
-    res.json({
+    // Prepare response
+    const response = {
       date: marketData.date,
       markets: {
         sp500: sp500Data,
         crypto: cryptoData
       },
       summary: aiSummary
+    };
+
+    // Cache the response
+    await cacheRef.set({
+      data: response,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
+    logger.info('Cached daily briefing', { date: marketData.date });
+
+    // Return comprehensive response
+    res.json(response);
 
   } catch (error) {
     logger.error('getDailyBriefing error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Failed to fetch daily briefing', message: error.message });
   }
 });
+
+// Magnificent 7 stocks: AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA
+exports.getMagnificent7 = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true,
+    secrets: [alphaKey],
+    timeoutSeconds: 70  // Fetch first 5 stocks (~60 seconds max)
+  }, 
+  async (req, res) => {
+    logger.info('getMagnificent7 invoked');
+    
+    try {
+      // Check cache first (5 minute cache)
+      const cacheKey = 'magnificent7_stocks';
+      const cacheRef = db.collection('cache').doc(cacheKey);
+      const cacheDoc = await cacheRef.get();
+      
+      if (cacheDoc.exists) {
+        const cachedData = cacheDoc.data();
+        const cacheAge = Date.now() - cachedData.timestamp.toMillis();
+        const fiveMinutes = 5 * 60 * 1000;
+        
+        if (cacheAge < fiveMinutes) {
+          logger.info('Returning cached Magnificent 7 data', { age: Math.round(cacheAge / 1000) + 's', count: cachedData.stocks?.length || 0 });
+          return res.json({
+            stocks: cachedData.stocks || [],
+            timestamp: cachedData.timestamp.toDate().toISOString(),
+            partial: cachedData.partial || false,
+            cached: true
+          });
+        }
+      }
+
+      const alphaKeyValue = alphaKey.value();
+    
+      if (!alphaKeyValue) {
+        // If no API key but we have cached data, return it even if stale
+        if (cacheDoc.exists) {
+          const cachedData = cacheDoc.data();
+          logger.warn('No API key, returning stale cache');
+          return res.json({
+            stocks: cachedData.stocks || [],
+            timestamp: cachedData.timestamp.toDate().toISOString(),
+            partial: cachedData.partial || false,
+            cached: true
+          });
+        }
+        logger.error('Missing Alpha Vantage API key');
+        return res.status(500).json({ error: 'API key not configured. Please set ALPHA_KEY environment variable.' });
+      }
+
+      const magnificent7 = [
+        { symbol: 'AAPL', name: 'Apple' },
+        { symbol: 'MSFT', name: 'Microsoft' },
+        { symbol: 'GOOGL', name: 'Alphabet' },
+        { symbol: 'AMZN', name: 'Amazon' },
+        { symbol: 'NVDA', name: 'Nvidia' },
+        { symbol: 'META', name: 'Meta' },
+        { symbol: 'TSLA', name: 'Tesla' }
+      ];
+
+      // Alpha Vantage free tier: 5 API calls per minute
+      // Fetch stocks with optimized delays - return after first 5 to avoid timeout
+      const stocks = [];
+      const delayBetweenCalls = 12000; // 12 seconds between calls (5 calls per minute)
+      const maxInitialFetch = 5; // Fetch first 5 stocks, return quickly
+    
+    // Fetch first batch quickly to avoid timeout
+    for (let i = 0; i < Math.min(magnificent7.length, maxInitialFetch); i++) {
+      const stock = magnificent7[i];
+      
+      try {
+        const response = await axios.get('https://www.alphavantage.co/query', {
+          params: {
+            function: 'GLOBAL_QUOTE',
+            symbol: stock.symbol,
+            apikey: alphaKeyValue
+          },
+          timeout: 10000 // 10 second timeout per request
+        });
+
+        // Check for rate limit error
+        if (response.data['Note'] || response.data['Information']) {
+          logger.warn(`Rate limit hit for ${stock.symbol}`, { data: response.data });
+          // If rate limited, return what we have so far
+          break;
+        }
+
+        if (response.data['Global Quote'] && response.data['Global Quote']['05. price']) {
+          const quote = response.data['Global Quote'];
+          stocks.push({
+            symbol: stock.symbol,
+            name: stock.name,
+            price: parseFloat(quote['05. price']),
+            change: parseFloat(quote['09. change']),
+            changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
+            high: parseFloat(quote['03. high']),
+            low: parseFloat(quote['04. low'])
+          });
+          logger.info(`Successfully fetched ${stock.symbol}`, { price: quote['05. price'] });
+        } else {
+          logger.warn(`No price data for ${stock.symbol}`, { data: response.data });
+        }
+      } catch (error) {
+        logger.error(`Error fetching ${stock.symbol}`, { 
+          error: error.message,
+          response: error.response?.data 
+        });
+        // Continue to next stock instead of failing completely
+      }
+
+      // Wait before next call (except after the last one in this batch)
+      if (i < Math.min(magnificent7.length, maxInitialFetch) - 1) {
+        await new Promise(resolve => setTimeout(resolve, delayBetweenCalls));
+      }
+    }
+
+    const validStocks = stocks;
+    const fetchedSymbols = validStocks.map(s => s.symbol);
+    const missingSymbols = magnificent7
+      .map(s => s.symbol)
+      .filter(s => !fetchedSymbols.includes(s));
+
+    logger.info('Magnificent 7 data fetched', { 
+      count: validStocks.length,
+      fetched: fetchedSymbols,
+      missing: missingSymbols
+    });
+
+    // Return whatever stocks we got, even if partial
+    // This allows the frontend to show available data even if rate-limited
+    if (validStocks.length === 0) {
+      logger.warn('No stocks fetched - likely rate limited, trying stale cache');
+      // If we have cached data, return it even if stale
+      if (cacheDoc.exists) {
+        const cachedData = cacheDoc.data();
+        logger.info('Returning stale cache due to rate limit');
+        return res.json({
+          stocks: cachedData.stocks || [],
+          timestamp: cachedData.timestamp.toDate().toISOString(),
+          partial: cachedData.partial || false,
+          cached: true,
+          rateLimited: true
+        });
+      }
+      return res.status(503).json({ 
+        error: 'Rate limit exceeded. Please try again in a minute.',
+        stocks: [],
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Cache the results
+    const responseData = {
+      stocks: validStocks,
+      timestamp: new Date().toISOString(),
+      partial: validStocks.length < magnificent7.length // Indicate if this is partial data
+    };
+
+    await cacheRef.set({
+      stocks: validStocks,
+      partial: responseData.partial,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+    logger.info('Cached Magnificent 7 data', { count: validStocks.length });
+
+    res.json(responseData);
+
+  } catch (error) {
+    logger.error('getMagnificent7 error', { error: error.message, stack: error.stack });
+    res.status(500).json({ error: 'Failed to fetch Magnificent 7 data', message: error.message });
+  }
+});
+
+// Helper function to verify authentication
+async function verifyAuth(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new Error('Unauthorized: No token provided');
+  }
+  
+  const token = authHeader.split('Bearer ')[1];
+  const decodedToken = await admin.auth().verifyIdToken(token);
+  return decodedToken.uid;
+}
+
+// Helper function to get stock price with caching (5 minute cache)
+async function getStockPrice(symbol, alphaKeyValue) {
+  const cacheKey = `stock_price_${symbol}`;
+  const cacheRef = db.collection('cache').doc(cacheKey);
+  const cacheDoc = await cacheRef.get();
+  
+  // Check if cached data exists and is less than 5 minutes old
+  if (cacheDoc.exists) {
+    const cachedData = cacheDoc.data();
+    const cacheAge = Date.now() - cachedData.timestamp.toMillis();
+    const fiveMinutes = 5 * 60 * 1000;
+    
+    if (cacheAge < fiveMinutes) {
+      logger.info(`Using cached price for ${symbol}`, { price: cachedData.price, age: Math.round(cacheAge / 1000) + 's' });
+      return cachedData.price;
+    }
+  }
+
+  // Fetch fresh price from API
+  const response = await axios.get('https://www.alphavantage.co/query', {
+    params: {
+      function: 'GLOBAL_QUOTE',
+      symbol: symbol,
+      apikey: alphaKeyValue
+    }
+  });
+
+  if (response.data['Note'] || response.data['Information']) {
+    // If rate limited, try to return cached data even if stale
+    if (cacheDoc.exists) {
+      const cachedData = cacheDoc.data();
+      logger.warn(`Rate limited, using stale cache for ${symbol}`, { price: cachedData.price });
+      return cachedData.price;
+    }
+    throw new Error('Alpha Vantage API rate limit exceeded. Please try again later.');
+  }
+
+  if (!response.data['Global Quote'] || !response.data['Global Quote']['05. price']) {
+    throw new Error(`Invalid stock symbol: ${symbol}`);
+  }
+
+  const price = parseFloat(response.data['Global Quote']['05. price']);
+  
+  // Cache the price
+  await cacheRef.set({
+    price: price,
+    symbol: symbol,
+    timestamp: admin.firestore.FieldValue.serverTimestamp()
+  });
+  
+  logger.info(`Cached price for ${symbol}`, { price });
+  return price;
+}
+
+// Helper function to initialize user account
+async function initializeAccount(userId) {
+  const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
+  const accountDoc = await accountRef.get();
+  
+  if (!accountDoc.exists) {
+    await accountRef.set({
+      balance: 10000.00,
+      totalInvested: 0.00,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    logger.info('Account initialized for user', { userId });
+  }
+  
+  return accountRef;
+}
+
+// Helper function to log transaction
+async function logTransaction(userId, type, symbol, shares, price, totalAmount) {
+  try {
+    const transactionRef = db.collection('users').doc(userId).collection('transactions').doc();
+    await transactionRef.set({
+      type: type, // 'buy' or 'sell'
+      symbol: symbol,
+      shares: shares,
+      price: price,
+      totalAmount: totalAmount,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+    logger.info('Transaction logged', { userId, type, symbol, shares });
+  } catch (error) {
+    logger.error('Error logging transaction', { error: error.message });
+    // Don't fail the transaction if logging fails
+  }
+}
+
+// Get stock price endpoint
+exports.getStockPrice = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true,
+    secrets: [alphaKey]
+  },
+  async (req, res) => {
+    try {
+      const symbol = req.query.symbol?.toUpperCase();
+      if (!symbol) {
+        return res.status(400).json({ error: 'Symbol parameter required' });
+      }
+
+      const alphaKeyValue = alphaKey.value();
+      const price = await getStockPrice(symbol, alphaKeyValue);
+      
+      res.json({ symbol, price });
+    } catch (error) {
+      logger.error('getStockPrice error', { error: error.message });
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Buy stock function
+exports.buyStock = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true,
+    secrets: [alphaKey]
+  },
+  async (req, res) => {
+    try {
+      // Verify authentication
+      const userId = await verifyAuth(req);
+      
+      const { symbol, quantity } = req.body;
+      
+      if (!symbol || !quantity || quantity < 1) {
+        return res.status(400).json({ error: 'Invalid symbol or quantity' });
+      }
+
+      const stockSymbol = symbol.toUpperCase();
+      const shares = parseInt(quantity);
+      const alphaKeyValue = alphaKey.value();
+
+      // Initialize account if needed
+      const accountRef = await initializeAccount(userId);
+      
+      // Get current stock price
+      const currentPrice = await getStockPrice(stockSymbol, alphaKeyValue);
+      const totalCost = shares * currentPrice;
+
+      // Check balance
+      const accountDoc = await accountRef.get();
+      const currentBalance = accountDoc.data().balance;
+      
+      if (currentBalance < totalCost) {
+        return res.status(400).json({ error: `Insufficient balance. Need $${totalCost.toFixed(2)}, have $${currentBalance.toFixed(2)}` });
+      }
+
+      // Update balance
+      await accountRef.update({
+        balance: admin.firestore.FieldValue.increment(-totalCost),
+        totalInvested: admin.firestore.FieldValue.increment(totalCost)
+      });
+
+      // Update portfolio
+      const portfolioRef = db.collection('users').doc(userId).collection('portfolio').doc(stockSymbol);
+      const portfolioDoc = await portfolioRef.get();
+
+      if (portfolioDoc.exists) {
+        // Update existing position
+        const existing = portfolioDoc.data();
+        const newShares = existing.shares + shares;
+        const newTotalCost = existing.totalCost + totalCost;
+        const newAvgPrice = newTotalCost / newShares;
+
+        await portfolioRef.update({
+          shares: newShares,
+          avgPrice: newAvgPrice,
+          totalCost: newTotalCost,
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        });
+      } else {
+        // Create new position
+        await portfolioRef.set({
+          shares: shares,
+          avgPrice: currentPrice,
+          totalCost: totalCost,
+          firstPurchased: admin.firestore.FieldValue.serverTimestamp(),
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      const newBalance = currentBalance - totalCost;
+      logger.info('Stock purchased', { userId, symbol: stockSymbol, shares, price: currentPrice, totalCost });
+
+      // Log transaction
+      await logTransaction(userId, 'buy', stockSymbol, shares, currentPrice, totalCost);
+
+      res.json({
+        success: true,
+        symbol: stockSymbol,
+        shares,
+        price: currentPrice,
+        totalCost,
+        newBalance
+      });
+
+    } catch (error) {
+      logger.error('buyStock error', { error: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Sell stock function
+exports.sellStock = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true,
+    secrets: [alphaKey]
+  },
+  async (req, res) => {
+    try {
+      // Verify authentication
+      const userId = await verifyAuth(req);
+      
+      const { symbol, quantity } = req.body;
+      
+      if (!symbol || !quantity || quantity < 1) {
+        return res.status(400).json({ error: 'Invalid symbol or quantity' });
+      }
+
+      const stockSymbol = symbol.toUpperCase();
+      const sharesToSell = parseInt(quantity);
+      const alphaKeyValue = alphaKey.value();
+
+      // Check portfolio
+      const portfolioRef = db.collection('users').doc(userId).collection('portfolio').doc(stockSymbol);
+      const portfolioDoc = await portfolioRef.get();
+
+      if (!portfolioDoc.exists) {
+        return res.status(400).json({ error: `You don't own any shares of ${stockSymbol}` });
+      }
+
+      const holding = portfolioDoc.data();
+      if (holding.shares < sharesToSell) {
+        return res.status(400).json({ error: `Insufficient shares. You own ${holding.shares} shares, trying to sell ${sharesToSell}` });
+      }
+
+      // Get current stock price
+      const currentPrice = await getStockPrice(stockSymbol, alphaKeyValue);
+      const proceeds = sharesToSell * currentPrice;
+      const originalCost = (holding.totalCost / holding.shares) * sharesToSell;
+      const profitLoss = proceeds - originalCost;
+
+      // Update balance
+      const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
+      await accountRef.update({
+        balance: admin.firestore.FieldValue.increment(proceeds)
+      });
+
+      // Update portfolio
+      const newShares = holding.shares - sharesToSell;
+      if (newShares === 0) {
+        // Remove position if selling all
+        await portfolioRef.delete();
+      } else {
+        // Update position
+        const newTotalCost = holding.totalCost - originalCost;
+        await portfolioRef.update({
+          shares: newShares,
+          totalCost: newTotalCost,
+          avgPrice: newTotalCost / newShares,
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      const accountDoc = await accountRef.get();
+      const newBalance = accountDoc.data().balance;
+
+      logger.info('Stock sold', { userId, symbol: stockSymbol, shares: sharesToSell, price: currentPrice, proceeds, profitLoss });
+
+      // Log transaction
+      await logTransaction(userId, 'sell', stockSymbol, sharesToSell, currentPrice, proceeds);
+
+      res.json({
+        success: true,
+        symbol: stockSymbol,
+        shares: sharesToSell,
+        price: currentPrice,
+        proceeds,
+        profitLoss,
+        newBalance
+      });
+
+    } catch (error) {
+      logger.error('sellStock error', { error: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
 

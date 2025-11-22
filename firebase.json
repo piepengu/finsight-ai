@@ -31,10 +31,42 @@
         }
       },
       {
+        "source": "/api/magnificent7",
+        "function": {
+          "functionId": "getMagnificent7",
+          "region": "us-east4"
+        }
+      },
+      {
+        "source": "/api/stockPrice",
+        "function": {
+          "functionId": "getStockPrice",
+          "region": "us-east4"
+        }
+      },
+      {
+        "source": "/api/buyStock",
+        "function": {
+          "functionId": "buyStock",
+          "region": "us-east4"
+        }
+      },
+      {
+        "source": "/api/sellStock",
+        "function": {
+          "functionId": "sellStock",
+          "region": "us-east4"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
     ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "emulators": {
     "functions": {
