@@ -1,0 +1,35 @@
+{
+  "name": "finsight-ai",
+  "version": "1.0.0",
+  "description": "FinSight AI - Daily Market Briefing for Young Investors",
+  "private": true,
+  "scripts": {
+    "dev": "firebase emulators:start",
+    "dev:hosting": "firebase emulators:start --only hosting",
+    "dev:functions": "firebase emulators:start --only functions",
+    "dev:all": "firebase emulators:start --only hosting,functions",
+    "build": "echo \"No build step required for static site\"",
+    "deploy": "firebase deploy",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "deploy:functions": "firebase deploy --only functions",
+    "serve": "firebase serve --only hosting"
+  },
+  "keywords": [
+    "firebase",
+    "finance",
+    "ai",
+    "market-briefing"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "firebase-tools": "^13.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
+
+
+
+

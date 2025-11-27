@@ -514,6 +514,15 @@ async function initializeAccount(userId) {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
     logger.info('Account initialized for user', { userId });
+    
+    // Create initial portfolio snapshot (no holdings yet, so portfolio value = cash balance)
+    const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
+    await snapshotRef.set({
+      cashBalance: 10000.00,
+      portfolioValue: 10000.00,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+    logger.info('Initial portfolio snapshot created', { userId });
   }
   
   return accountRef;
@@ -535,6 +544,50 @@ async function logTransaction(userId, type, symbol, shares, price, totalAmount) 
   } catch (error) {
     logger.error('Error logging transaction', { error: error.message });
     // Don't fail the transaction if logging fails
+  }
+}
+
+// Helper function to record portfolio snapshot
+async function recordPortfolioSnapshot(userId, alphaKeyValue) {
+  try {
+    // Get account balance
+    const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
+    const accountDoc = await accountRef.get();
+    if (!accountDoc.exists) {
+      logger.warn('Cannot record snapshot: account does not exist', { userId });
+      return;
+    }
+    
+    const cashBalance = accountDoc.data().balance || 0;
+    
+    // Get all holdings
+    const portfolioRef = db.collection('users').doc(userId).collection('portfolio');
+    const portfolioSnapshot = await portfolioRef.get();
+    
+    let portfolioValue = cashBalance;
+    
+    // Calculate total portfolio value
+    // Use avgPrice as fallback to avoid rate limits - we'll get fresh prices when displaying
+    for (const doc of portfolioSnapshot.docs) {
+      const holding = doc.data();
+      // Use avgPrice as fallback to avoid API rate limits during snapshot creation
+      // The frontend will fetch fresh prices when displaying holdings
+      const currentValue = holding.shares * (holding.avgPrice || 0);
+      portfolioValue += currentValue;
+    }
+    
+    // Record snapshot
+    const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
+    await snapshotRef.set({
+      cashBalance: cashBalance,
+      portfolioValue: portfolioValue,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    logger.info('Portfolio snapshot recorded', { userId, portfolioValue, cashBalance, holdingsCount: portfolioSnapshot.docs.length });
+  } catch (error) {
+    logger.error('Error recording portfolio snapshot', { error: error.message, stack: error.stack });
+    // Don't fail the transaction if snapshot fails
   }
 }
 
@@ -640,6 +693,9 @@ exports.buyStock = onRequest(
       // Log transaction
       await logTransaction(userId, 'buy', stockSymbol, shares, currentPrice, totalCost);
 
+      // Record portfolio snapshot
+      await recordPortfolioSnapshot(userId, alphaKeyValue);
+
       res.json({
         success: true,
         symbol: stockSymbol,
@@ -727,6 +783,9 @@ exports.sellStock = onRequest(
       // Log transaction
       await logTransaction(userId, 'sell', stockSymbol, sharesToSell, currentPrice, proceeds);
 
+      // Record portfolio snapshot
+      await recordPortfolioSnapshot(userId, alphaKeyValue);
+
       res.json({
         success: true,
         symbol: stockSymbol,
@@ -739,6 +798,90 @@ exports.sellStock = onRequest(
 
     } catch (error) {
       logger.error('sellStock error', { error: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Get portfolio history for charts
+exports.getPortfolioHistory = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true
+  },
+  async (req, res) => {
+    try {
+      // Verify authentication
+      const userId = await verifyAuth(req);
+      
+      // Get snapshots, ordered by timestamp
+      const snapshotsRef = db.collection('users').doc(userId).collection('snapshots');
+      const snapshotsQuery = snapshotsRef.orderBy('timestamp', 'desc').limit(100); // Last 100 snapshots
+      const snapshotsSnapshot = await snapshotsQuery.get();
+      
+      const snapshots = [];
+      snapshotsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        snapshots.push({
+          timestamp: data.timestamp?.toDate().toISOString() || new Date().toISOString(),
+          portfolioValue: data.portfolioValue || 0,
+          cashBalance: data.cashBalance || 0
+        });
+      });
+      
+      // Reverse to get chronological order (oldest first)
+      snapshots.reverse();
+      
+      // If no snapshots exist, or only one snapshot exists, create a current snapshot
+      // This ensures we have at least 2 points for a meaningful chart
+      if (snapshots.length <= 1) {
+        const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
+        const accountDoc = await accountRef.get();
+        const cashBalance = accountDoc.exists ? (accountDoc.data().balance || 10000) : 10000;
+        
+        // Get all holdings to calculate current portfolio value
+        const portfolioRef = db.collection('users').doc(userId).collection('portfolio');
+        const portfolioSnapshot = await portfolioRef.get();
+        
+        let portfolioValue = cashBalance;
+        for (const doc of portfolioSnapshot.docs) {
+          const holding = doc.data();
+          // Use avgPrice for snapshot (avoids rate limits)
+          portfolioValue += holding.shares * (holding.avgPrice || 0);
+        }
+        
+        // If no snapshots exist, create initial one
+        if (snapshots.length === 0) {
+          snapshots.push({
+            timestamp: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
+            portfolioValue: 10000, // Starting capital
+            cashBalance: 10000
+          });
+        }
+        
+        // Always add current snapshot
+        snapshots.push({
+          timestamp: new Date().toISOString(),
+          portfolioValue: portfolioValue,
+          cashBalance: cashBalance
+        });
+        
+        // Also save current snapshot to Firestore for future use
+        const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
+        await snapshotRef.set({
+          cashBalance: cashBalance,
+          portfolioValue: portfolioValue,
+          timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+      
+      res.json({
+        success: true,
+        snapshots: snapshots
+      });
+      
+    } catch (error) {
+      logger.error('getPortfolioHistory error', { error: error.message, stack: error.stack });
       res.status(500).json({ error: error.message });
     }
   }

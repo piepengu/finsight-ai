@@ -102,12 +102,18 @@
 - **Cache Collection:** Read-only for authenticated users, write-only by functions
 - **Rate Limit Handling:** Graceful degradation with cached data fallback
 
-## Next Steps
-1. **Portfolio Performance Charts (Pending):**
-   - Add visual charts showing portfolio value over time
-   - Historical performance tracking
+### ✅ Portfolio Performance Charts (Completed)
+- **Chart.js Integration:** Added Chart.js library for data visualization
+- **Portfolio History Function:** `getPortfolioHistory` Cloud Function fetches historical snapshots
+- **Portfolio Snapshots:** Automatic snapshot creation after each trade (records cash balance + portfolio value)
+- **Chart Display:** Line chart showing portfolio value over time with starting capital baseline ($10,000)
+- **Real-time Updates:** Chart refreshes automatically after buy/sell operations
+- **Initial Snapshot:** Creates initial snapshot on account creation
+- **Smart Data Handling:** Ensures at least 2 data points for meaningful chart display
+- **Error Handling:** Graceful fallback when no historical data exists
 
-2. **Future enhancements:**
+## Next Steps
+1. **Future enhancements:**
    - Add retry logic with exponential backoff for rate limits
    - Consider scheduled function for daily auto-generation
    - Add more data visualization (charts/graphs)
@@ -134,6 +140,8 @@
 - **Caching:** Firestore-based caching for stock prices (5 min), daily briefing (1 hour), Magnificent 7 (5 min)
 - **Real-time Updates:** Firestore `onSnapshot` listeners for portfolio and transaction updates
 - **Authentication:** Firebase Auth with Google Sign-In provider
+- **Portfolio Charts:** Chart.js integration for portfolio performance visualization with historical snapshots
+- **Portfolio Snapshots:** Automatic recording of portfolio value after each trade for historical tracking
 
 ---
 

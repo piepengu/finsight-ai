@@ -282,6 +282,9 @@ function setupPortfolioListeners(userId) {
 
   const { doc, onSnapshot, collection, query, orderBy, limit } = window.firebaseFirestoreFunctions;
   
+  // Load portfolio chart
+  loadPortfolioChart(userId);
+  
   // Listen to account balance
   const accountRef = doc(window.firebaseDb, 'users', userId, 'account', 'balance');
   onSnapshot(accountRef, (snapshot) => {
@@ -315,6 +318,14 @@ function setupPortfolioListeners(userId) {
       transactions.push({ id: doc.id, ...doc.data() });
     });
     updateTransactionHistory(transactions);
+  });
+  
+  // Listen to portfolio snapshots for chart updates
+  const snapshotsRef = collection(window.firebaseDb, 'users', userId, 'snapshots');
+  const snapshotsQuery = query(snapshotsRef, orderBy('timestamp', 'desc'), limit(1));
+  onSnapshot(snapshotsQuery, () => {
+    // Reload chart when new snapshot is added
+    loadPortfolioChart(userId);
   });
 }
 
@@ -378,6 +389,163 @@ function updatePortfolioValue(holdingsValue = 0) {
   plElement.textContent = `${totalPL >= 0 ? '+' : ''}$${totalPL.toFixed(2)}`;
   plElement.className = `change ${plClass}`;
   plElement.style.color = totalPL >= 0 ? '#059669' : '#dc2626';
+  
+  // Update chart with current value
+  updatePortfolioChart();
+}
+
+// Portfolio chart
+let portfolioChart = null;
+
+async function loadPortfolioChart(userId) {
+  try {
+    const token = await window.firebaseAuth.currentUser?.getIdToken();
+    if (!token) return;
+
+    const res = await fetch('/api/portfolioHistory', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!res.ok) {
+      console.error('Failed to load portfolio history');
+      return;
+    }
+
+    const data = await res.json();
+    if (!data.success || !data.snapshots || data.snapshots.length === 0) {
+      // Show message if no data
+      const canvas = document.getElementById('portfolio-chart');
+      if (canvas) {
+        const chartContainer = canvas.parentElement;
+        chartContainer.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 2rem;">No historical data yet. Make some trades to see your portfolio grow!</p>';
+      }
+      return;
+    }
+
+    renderPortfolioChart(data.snapshots);
+  } catch (error) {
+    console.error('Error loading portfolio chart:', error);
+    // Show error message
+    const canvas = document.getElementById('portfolio-chart');
+    if (canvas) {
+      const chartContainer = canvas.parentElement;
+      chartContainer.innerHTML = `<p style="text-align: center; color: #dc2626; padding: 2rem;">Error loading chart: ${error.message}</p>`;
+    }
+  }
+}
+
+function renderPortfolioChart(snapshots) {
+  const canvas = document.getElementById('portfolio-chart');
+  if (!canvas) {
+    console.error('Portfolio chart canvas not found');
+    return;
+  }
+
+  // If no snapshots, show a message
+  if (!snapshots || snapshots.length === 0) {
+    const chartContainer = canvas.parentElement;
+    chartContainer.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 2rem;">No historical data yet. Make some trades to see your portfolio grow!</p>';
+    return;
+  }
+
+  const ctx = canvas.getContext('2d');
+
+  // Prepare data
+  const labels = snapshots.map(s => {
+    const date = new Date(s.timestamp);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  });
+  
+  const portfolioValues = snapshots.map(s => s.portfolioValue || 0);
+  const startingCapital = 10000;
+  const baseline = new Array(snapshots.length).fill(startingCapital);
+
+  // Destroy existing chart if it exists
+  if (portfolioChart) {
+    portfolioChart.destroy();
+  }
+
+  // Create new chart
+  portfolioChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Portfolio Value',
+          data: portfolioValues,
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37, 99, 235, 0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.4,
+          pointRadius: 3,
+          pointHoverRadius: 5
+        },
+        {
+          label: 'Starting Capital ($10,000)',
+          data: baseline,
+          borderColor: '#9ca3af',
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          borderDash: [5, 5],
+          fill: false,
+          pointRadius: 0
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          callbacks: {
+            label: function(context) {
+              return context.dataset.label + ': $' + context.parsed.y.toFixed(2);
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: false,
+          ticks: {
+            callback: function(value) {
+              return '$' + value.toFixed(0);
+            }
+          },
+          grid: {
+            color: 'rgba(0, 0, 0, 0.05)'
+          }
+        },
+        x: {
+          grid: {
+            display: false
+          }
+        }
+      },
+      interaction: {
+        mode: 'nearest',
+        axis: 'x',
+        intersect: false
+      }
+    }
+  });
+}
+
+async function updatePortfolioChart() {
+  if (!window.firebaseAuth.currentUser) return;
+  
+  // Reload chart data to include latest snapshot
+  await loadPortfolioChart(window.firebaseAuth.currentUser.uid);
 }
 
 function updateTransactionHistory(transactions) {
