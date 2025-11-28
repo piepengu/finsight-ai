@@ -307,6 +307,46 @@
       </div>
     </div>
 
+    <!-- Watchlist Section (shown when logged in) -->
+    <div id="watchlist-section" style="display: none; margin-bottom: 2rem;">
+      <h2>⭐ My Watchlist</h2>
+      
+      <!-- Add to Watchlist Form -->
+      <div class="watchlist-form" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
+        <h3 style="margin-top: 0;">Add Stock to Watchlist</h3>
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: end;">
+          <div>
+            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol</label>
+            <input type="text" id="watchlist-symbol" placeholder="e.g., TSLA" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+          </div>
+          <button id="add-watchlist-btn" style="padding: 0.75rem 1.5rem; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Add</button>
+        </div>
+        <div id="watchlist-message" style="margin-top: 1rem;"></div>
+      </div>
+
+      <!-- Watchlist Table -->
+      <div class="watchlist-section">
+        <h3>Watched Stocks</h3>
+        <div id="watchlist-table" style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
+            <thead>
+              <tr style="background: #f9fafb;">
+                <th style="padding: 1rem; text-align: left; font-weight: 600;">Symbol</th>
+                <th style="padding: 1rem; text-align: right; font-weight: 600;">Current Price</th>
+                <th style="padding: 1rem; text-align: right; font-weight: 600;">Change</th>
+                <th style="padding: 1rem; text-align: center; font-weight: 600;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="watchlist-tbody">
+              <tr>
+                <td colspan="4" style="padding: 2rem; text-align: center; color: #6b7280;">No stocks in watchlist. Add some stocks to track!</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <button id="fetch-btn">Get Today's Briefing</button>
     
     <div id="output">

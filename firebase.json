@@ -66,6 +66,20 @@
         }
       },
       {
+        "source": "/api/addToWatchlist",
+        "function": {
+          "functionId": "addToWatchlist",
+          "region": "us-east4"
+        }
+      },
+      {
+        "source": "/api/removeFromWatchlist",
+        "function": {
+          "functionId": "removeFromWatchlist",
+          "region": "us-east4"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

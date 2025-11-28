@@ -597,12 +597,195 @@ function initAuth() {
       userName.textContent = user.displayName || user.email;
       portfolioSection.style.display = 'block';
       setupPortfolioListeners(user.uid);
+      setupWatchlistListener(user.uid);
     } else {
       // User is signed out
       loginBtn.style.display = 'block';
       userInfo.style.display = 'none';
       portfolioSection.style.display = 'none';
+      document.getElementById('watchlist-section').style.display = 'none';
     }
+  });
+}
+
+// Watchlist Functions
+async function addToWatchlist() {
+  const symbolInput = document.getElementById('watchlist-symbol');
+  const messageDiv = document.getElementById('watchlist-message');
+  const addBtn = document.getElementById('add-watchlist-btn');
+  
+  const symbol = symbolInput.value.trim().toUpperCase();
+  
+  if (!symbol) {
+    messageDiv.innerHTML = '<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px;">Please enter a stock symbol</div>';
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 3000);
+    return;
+  }
+
+  if (!window.firebaseAuth || !window.firebaseAuth.currentUser) {
+    messageDiv.innerHTML = '<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px;">Please sign in to use watchlist</div>';
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 3000);
+    return;
+  }
+
+  addBtn.disabled = true;
+  addBtn.textContent = 'Adding...';
+  messageDiv.innerHTML = '';
+
+  try {
+    const token = await window.firebaseAuth.currentUser.getIdToken();
+    const res = await fetch('/api/addToWatchlist', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ symbol })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to add to watchlist');
+    }
+
+    // Success
+    symbolInput.value = '';
+    messageDiv.innerHTML = `<div style="padding: 0.75rem; background: #d1fae5; color: #065f46; border-radius: 6px; animation: slideIn 0.3s ease-out;">✓ ${symbol} added to watchlist</div>`;
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 3000);
+
+  } catch (error) {
+    messageDiv.innerHTML = `<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px;">Error: ${error.message}</div>`;
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 5000);
+  } finally {
+    addBtn.disabled = false;
+    addBtn.textContent = 'Add';
+  }
+}
+
+async function removeFromWatchlist(symbol) {
+  if (!window.firebaseAuth || !window.firebaseAuth.currentUser) {
+    return;
+  }
+
+  if (!confirm(`Remove ${symbol} from watchlist?`)) {
+    return;
+  }
+
+  try {
+    const token = await window.firebaseAuth.currentUser.getIdToken();
+    const res = await fetch('/api/removeFromWatchlist', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ symbol })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to remove from watchlist');
+    }
+
+  } catch (error) {
+    console.error('Error removing from watchlist:', error);
+    alert(`Error removing ${symbol}: ${error.message}`);
+  }
+}
+
+// Make removeFromWatchlist globally accessible
+window.removeFromWatchlist = removeFromWatchlist;
+
+async function updateWatchlistTable(watchlistItems) {
+  const tbody = document.getElementById('watchlist-tbody');
+  
+  if (!watchlistItems || watchlistItems.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="padding: 2rem; text-align: center; color: #6b7280;">No stocks in watchlist. Add some stocks to track!</td></tr>';
+    return;
+  }
+
+  // Fetch prices for all watchlist items
+  const pricePromises = watchlistItems.map(async (item) => {
+    try {
+      const token = await window.firebaseAuth.currentUser.getIdToken();
+      const res = await fetch(`/api/stockPrice?symbol=${item.symbol}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          symbol: item.symbol,
+          price: data.price || 0,
+          change: data.change || 0,
+          changePercent: data.changePercent || 0
+        };
+      }
+      return {
+        symbol: item.symbol,
+        price: 0,
+        change: 0,
+        changePercent: 0
+      };
+    } catch (error) {
+      console.error(`Error fetching price for ${item.symbol}:`, error);
+      return {
+        symbol: item.symbol,
+        price: 0,
+        change: 0,
+        changePercent: 0
+      };
+    }
+  });
+
+  const prices = await Promise.all(pricePromises);
+
+  // Build table rows
+  let html = '';
+  prices.forEach((stock) => {
+    const changeClass = stock.changePercent >= 0 ? 'positive' : 'negative';
+    const changeSign = stock.changePercent >= 0 ? '+' : '';
+    
+    html += `
+      <tr>
+        <td style="padding: 1rem; font-weight: 600;">${stock.symbol}</td>
+        <td style="padding: 1rem; text-align: right; font-weight: 600;">$${stock.price.toFixed(2)}</td>
+        <td style="padding: 1rem; text-align: right;">
+          <span class="change ${changeClass}" style="font-weight: 600;">
+            ${changeSign}${stock.changePercent.toFixed(2)}%
+            (${changeSign}$${stock.change.toFixed(2)})
+          </span>
+        </td>
+        <td style="padding: 1rem; text-align: center;">
+          <button onclick="removeFromWatchlist('${stock.symbol}')" style="padding: 0.5rem 1rem; background: #dc2626; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem;">Remove</button>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function setupWatchlistListener(userId) {
+  if (!window.firebaseDb || !window.firebaseFirestoreFunctions) return;
+
+  const { collection, onSnapshot } = window.firebaseFirestoreFunctions;
+  
+  // Show watchlist section
+  document.getElementById('watchlist-section').style.display = 'block';
+
+  // Listen to watchlist collection
+  const watchlistRef = collection(window.firebaseDb, 'users', userId, 'watchlist');
+  onSnapshot(watchlistRef, async (snapshot) => {
+    const watchlistItems = [];
+    snapshot.forEach((doc) => {
+      watchlistItems.push({ symbol: doc.id, ...doc.data() });
+    });
+    await updateWatchlistTable(watchlistItems);
   });
 }
 
@@ -622,5 +805,16 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('logout-btn').addEventListener('click', signOutUser);
     document.getElementById('buy-btn').addEventListener('click', buyStock);
     document.getElementById('sell-btn').addEventListener('click', sellStock);
+    document.getElementById('add-watchlist-btn').addEventListener('click', addToWatchlist);
+    
+    // Allow Enter key to add to watchlist
+    const watchlistSymbolInput = document.getElementById('watchlist-symbol');
+    if (watchlistSymbolInput) {
+      watchlistSymbolInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          addToWatchlist();
+        }
+      });
+    }
   }, 1000); // Wait for Firebase to initialize
 });

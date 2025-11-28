@@ -832,8 +832,8 @@ exports.getPortfolioHistory = onRequest(
       // Reverse to get chronological order (oldest first)
       snapshots.reverse();
       
-      // If no snapshots exist, or only one snapshot exists, create a current snapshot
-      // This ensures we have at least 2 points for a meaningful chart
+      // If no snapshots exist, or only one snapshot exists, ensure we have at least 2 points
+      // This ensures a meaningful chart with proper time separation
       if (snapshots.length <= 1) {
         const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
         const accountDoc = await accountRef.get();
@@ -850,29 +850,45 @@ exports.getPortfolioHistory = onRequest(
           portfolioValue += holding.shares * (holding.avgPrice || 0);
         }
         
-        // If no snapshots exist, create initial one
+        // Determine the earliest timestamp we have
+        let earliestTimestamp;
         if (snapshots.length === 0) {
-          snapshots.push({
-            timestamp: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
-            portfolioValue: 10000, // Starting capital
-            cashBalance: 10000
-          });
+          // No snapshots: create one from 1 day ago
+          earliestTimestamp = Date.now() - 86400000; // 1 day ago
+        } else {
+          // We have 1 snapshot: create one from 1 day before it
+          const firstSnapshotTime = new Date(snapshots[0].timestamp).getTime();
+          earliestTimestamp = firstSnapshotTime - 86400000; // 1 day before first snapshot
         }
         
-        // Always add current snapshot
-        snapshots.push({
-          timestamp: new Date().toISOString(),
-          portfolioValue: portfolioValue,
-          cashBalance: cashBalance
+        // Insert synthetic starting point at the beginning
+        snapshots.unshift({
+          timestamp: new Date(earliestTimestamp).toISOString(),
+          portfolioValue: 10000, // Starting capital
+          cashBalance: 10000
         });
         
-        // Also save current snapshot to Firestore for future use
-        const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
-        await snapshotRef.set({
-          cashBalance: cashBalance,
-          portfolioValue: portfolioValue,
-          timestamp: admin.firestore.FieldValue.serverTimestamp()
-        });
+        // Add current snapshot at the end (only if it's different from existing)
+        const now = new Date().toISOString();
+        const lastSnapshot = snapshots[snapshots.length - 1];
+        const timeDiff = Math.abs(new Date(now).getTime() - new Date(lastSnapshot.timestamp).getTime());
+        
+        // Only add current snapshot if it's more than 1 minute different from the last one
+        if (timeDiff > 60000 || snapshots.length === 1) {
+          snapshots.push({
+            timestamp: now,
+            portfolioValue: portfolioValue,
+            cashBalance: cashBalance
+          });
+          
+          // Also save current snapshot to Firestore for future use
+          const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
+          await snapshotRef.set({
+            cashBalance: cashBalance,
+            portfolioValue: portfolioValue,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+          });
+        }
       }
       
       res.json({
@@ -882,6 +898,84 @@ exports.getPortfolioHistory = onRequest(
       
     } catch (error) {
       logger.error('getPortfolioHistory error', { error: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Add stock to watchlist
+exports.addToWatchlist = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true
+  },
+  async (req, res) => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+      }
+
+      const userId = await verifyAuth(req);
+      const { symbol } = req.body;
+
+      if (!symbol) {
+        return res.status(400).json({ error: 'Stock symbol is required' });
+      }
+
+      const stockSymbol = symbol.toUpperCase().trim();
+      
+      // Validate symbol format (basic check)
+      if (!/^[A-Z]{1,5}$/.test(stockSymbol)) {
+        return res.status(400).json({ error: 'Invalid stock symbol format' });
+      }
+
+      // Add to watchlist
+      const watchlistRef = db.collection('users').doc(userId).collection('watchlist').doc(stockSymbol);
+      await watchlistRef.set({
+        symbol: stockSymbol,
+        addedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      logger.info('Stock added to watchlist', { userId, symbol: stockSymbol });
+      res.json({ success: true, message: `${stockSymbol} added to watchlist` });
+
+    } catch (error) {
+      logger.error('addToWatchlist error', { error: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Remove stock from watchlist
+exports.removeFromWatchlist = onRequest(
+  { 
+    region: 'us-east4', 
+    cors: true
+  },
+  async (req, res) => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+      }
+
+      const userId = await verifyAuth(req);
+      const { symbol } = req.body;
+
+      if (!symbol) {
+        return res.status(400).json({ error: 'Stock symbol is required' });
+      }
+
+      const stockSymbol = symbol.toUpperCase().trim();
+
+      // Remove from watchlist
+      const watchlistRef = db.collection('users').doc(userId).collection('watchlist').doc(stockSymbol);
+      await watchlistRef.delete();
+
+      logger.info('Stock removed from watchlist', { userId, symbol: stockSymbol });
+      res.json({ success: true, message: `${stockSymbol} removed from watchlist` });
+
+    } catch (error) {
+      logger.error('removeFromWatchlist error', { error: error.message, stack: error.stack });
       res.status(500).json({ error: error.message });
     }
   }
