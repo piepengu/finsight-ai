@@ -502,6 +502,96 @@ async function getStockPrice(symbol, alphaKeyValue) {
   return price;
 }
 
+// Helper function to search for stock symbol by company name or symbol
+async function searchSymbol(input, alphaKeyValue, logger) {
+  const trimmedInput = input.trim().toUpperCase();
+  
+  // Check if input looks like a symbol (3-5 uppercase letters, possibly with numbers)
+  const symbolPattern = /^[A-Z]{1,5}$/;
+  const isLikelySymbol = symbolPattern.test(trimmedInput);
+  
+  // If it looks like a symbol, try it directly first
+  if (isLikelySymbol) {
+    try {
+      const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
+        params: {
+          function: 'GLOBAL_QUOTE',
+          symbol: trimmedInput,
+          apikey: alphaKeyValue
+        }
+      });
+      
+      if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
+        const quote = quoteResponse.data['Global Quote'];
+        return {
+          symbol: quote['01. symbol'],
+          name: quote['01. symbol'], // Name not in quote, will be fetched later
+          matchType: 'direct'
+        };
+      }
+    } catch (error) {
+      logger.warn('Direct symbol lookup failed, trying search', { symbol: trimmedInput, error: error.message });
+    }
+  }
+  
+  // Search by keywords (company name or symbol)
+  try {
+    const searchResponse = await axios.get('https://www.alphavantage.co/query', {
+      params: {
+        function: 'SYMBOL_SEARCH',
+        keywords: input.trim(),
+        apikey: alphaKeyValue
+      }
+    });
+    
+    if (searchResponse.data.Note || searchResponse.data['Error Message']) {
+      throw new Error(searchResponse.data.Note || searchResponse.data['Error Message'] || 'API rate limit');
+    }
+    
+    if (searchResponse.data.bestMatches && searchResponse.data.bestMatches.length > 0) {
+      // Filter for US stocks (Region: United States) and prefer equity types
+      const usStocks = searchResponse.data.bestMatches.filter(
+        match => match['4. region'] === 'United States' && 
+                 (match['3. type'] === 'Equity' || match['3. type'] === 'ETF')
+      );
+      
+      if (usStocks.length > 0) {
+        const bestMatch = usStocks[0];
+        return {
+          symbol: bestMatch['1. symbol'],
+          name: bestMatch['2. name'],
+          matchType: 'search',
+          allMatches: usStocks.slice(0, 5).map(m => ({
+            symbol: m['1. symbol'],
+            name: m['2. name'],
+            type: m['3. type'],
+            region: m['4. region']
+          }))
+        };
+      }
+      
+      // If no US stocks, return first match anyway
+      const firstMatch = searchResponse.data.bestMatches[0];
+      return {
+        symbol: firstMatch['1. symbol'],
+        name: firstMatch['2. name'],
+        matchType: 'search',
+        allMatches: searchResponse.data.bestMatches.slice(0, 5).map(m => ({
+          symbol: m['1. symbol'],
+          name: m['2. name'],
+          type: m['3. type'],
+          region: m['4. region']
+        }))
+      };
+    }
+    
+    throw new Error(`No matches found for "${input}"`);
+  } catch (error) {
+    logger.error('Symbol search error', { input, error: error.message });
+    throw error;
+  }
+}
+
 // Helper function to initialize user account
 async function initializeAccount(userId) {
   const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
@@ -807,7 +897,8 @@ exports.sellStock = onRequest(
 exports.getPortfolioHistory = onRequest(
   { 
     region: 'us-east4', 
-    cors: true
+    cors: true,
+    secrets: [alphaKey]
   },
   async (req, res) => {
     try {
@@ -832,24 +923,48 @@ exports.getPortfolioHistory = onRequest(
       // Reverse to get chronological order (oldest first)
       snapshots.reverse();
       
+      // Get current account balance and holdings for latest snapshot
+      const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
+      const accountDoc = await accountRef.get();
+      const cashBalance = accountDoc.exists ? (accountDoc.data().balance || 10000) : 10000;
+      
+      const portfolioRef = db.collection('users').doc(userId).collection('portfolio');
+      const portfolioSnapshot = await portfolioRef.get();
+      
+      // Calculate current portfolio value with current market prices (for latest snapshot)
+      let currentPortfolioValue = cashBalance;
+      const holdings = [];
+      for (const doc of portfolioSnapshot.docs) {
+        const holding = doc.data();
+        holdings.push({ symbol: doc.id, ...holding });
+        // For now, use avgPrice as fallback - we'll try to fetch current prices below
+        currentPortfolioValue += holding.shares * (holding.avgPrice || 0);
+      }
+      
+      // Try to fetch current prices for the latest snapshot (limit to avoid rate limits)
+      if (holdings.length > 0 && holdings.length <= 5) {
+        try {
+          const alphaKeyValue = alphaKey.value();
+          let updatedValue = cashBalance;
+          for (const holding of holdings) {
+            try {
+              const currentPrice = await getStockPrice(holding.symbol, alphaKeyValue);
+              updatedValue += holding.shares * currentPrice;
+            } catch (err) {
+              // Fallback to avgPrice if price fetch fails
+              updatedValue += holding.shares * (holding.avgPrice || 0);
+            }
+          }
+          currentPortfolioValue = updatedValue;
+        } catch (err) {
+          // If fetching prices fails, use avgPrice calculation
+          logger.warn('Could not fetch current prices for portfolio history, using avgPrice', { error: err.message });
+        }
+      }
+      
       // If no snapshots exist, or only one snapshot exists, ensure we have at least 2 points
       // This ensures a meaningful chart with proper time separation
       if (snapshots.length <= 1) {
-        const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
-        const accountDoc = await accountRef.get();
-        const cashBalance = accountDoc.exists ? (accountDoc.data().balance || 10000) : 10000;
-        
-        // Get all holdings to calculate current portfolio value
-        const portfolioRef = db.collection('users').doc(userId).collection('portfolio');
-        const portfolioSnapshot = await portfolioRef.get();
-        
-        let portfolioValue = cashBalance;
-        for (const doc of portfolioSnapshot.docs) {
-          const holding = doc.data();
-          // Use avgPrice for snapshot (avoids rate limits)
-          portfolioValue += holding.shares * (holding.avgPrice || 0);
-        }
-        
         // Determine the earliest timestamp we have
         let earliestTimestamp;
         if (snapshots.length === 0) {
@@ -867,28 +982,34 @@ exports.getPortfolioHistory = onRequest(
           portfolioValue: 10000, // Starting capital
           cashBalance: 10000
         });
-        
-        // Add current snapshot at the end (only if it's different from existing)
-        const now = new Date().toISOString();
-        const lastSnapshot = snapshots[snapshots.length - 1];
-        const timeDiff = Math.abs(new Date(now).getTime() - new Date(lastSnapshot.timestamp).getTime());
-        
-        // Only add current snapshot if it's more than 1 minute different from the last one
-        if (timeDiff > 60000 || snapshots.length === 1) {
+      }
+      
+      // Always add/update the latest snapshot with current portfolio value
+      const now = new Date().toISOString();
+      const lastSnapshot = snapshots[snapshots.length - 1];
+      const timeDiff = lastSnapshot ? Math.abs(new Date(now).getTime() - new Date(lastSnapshot.timestamp).getTime()) : Infinity;
+      
+      // Add current snapshot if it's more than 30 seconds different from the last one, or if it's the first one
+      if (timeDiff > 30000 || snapshots.length === 0) {
+        // Update or add the latest snapshot
+        if (snapshots.length > 0 && timeDiff < 3600000) { // Less than 1 hour old, update it
+          snapshots[snapshots.length - 1] = {
+            timestamp: now,
+            portfolioValue: currentPortfolioValue,
+            cashBalance: cashBalance
+          };
+        } else {
+          // Add new snapshot
           snapshots.push({
             timestamp: now,
-            portfolioValue: portfolioValue,
+            portfolioValue: currentPortfolioValue,
             cashBalance: cashBalance
           });
-          
-          // Also save current snapshot to Firestore for future use
-          const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
-          await snapshotRef.set({
-            cashBalance: cashBalance,
-            portfolioValue: portfolioValue,
-            timestamp: admin.firestore.FieldValue.serverTimestamp()
-          });
         }
+      } else if (snapshots.length > 0) {
+        // Update the last snapshot's value even if timestamp is close
+        snapshots[snapshots.length - 1].portfolioValue = currentPortfolioValue;
+        snapshots[snapshots.length - 1].cashBalance = cashBalance;
       }
       
       res.json({
@@ -977,6 +1098,478 @@ exports.removeFromWatchlist = onRequest(
     } catch (error) {
       logger.error('removeFromWatchlist error', { error: error.message, stack: error.stack });
       res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Helper function to call Gemini API with model fallback
+async function callGeminiAPI(prompt, geminiKeyValue, logger) {
+  const retiredPreviewModels = [
+    'gemini-2.0-flash-lite-preview',
+    'gemini-2.0-flash-lite-preview-02-05',
+    'gemini-2.0-flash-thinking-exp',
+    'gemini-2.0-flash-thinking-exp-01-21',
+    'gemini-2.0-flash-thinking-exp-1219',
+    'gemini-2.5-flash-lite-preview-06-17',
+    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.5-pro-preview-06-05',
+    'gemini-2.5-pro-preview-03-25',
+    'gemini-2.5-pro-preview-05-06'
+  ];
+  
+  let modelName = null;
+  try {
+    const modelsResponse = await axios.get(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKeyValue}`
+    );
+    
+    if (modelsResponse.data?.models) {
+      const availableModels = modelsResponse.data.models.filter(
+        (m) => m.supportedGenerationMethods?.includes('generateContent') &&
+               !retiredPreviewModels.some(retired => m.name.includes(retired))
+      );
+      
+      const stableModel = availableModels.find(m => !m.name.includes('preview'));
+      const previewModel = availableModels.find(m => m.name.includes('preview'));
+      
+      const selectedModel = stableModel || previewModel;
+      if (selectedModel) {
+        modelName = selectedModel.name.replace('models/', '');
+        logger.info('Found available model', { model: modelName, isStable: !!stableModel });
+      }
+    }
+  } catch (listError) {
+    logger.warn('Could not list models, will try default', { error: listError.message });
+  }
+
+  const modelNamesToTry = modelName 
+    ? [modelName] 
+    : [
+        'gemini-2.5-flash',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash-lite',
+        'gemini-2.5-flash-preview-09-2025',
+        'gemini-2.5-flash-lite-preview-09-2025',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
+        'gemini-pro'
+      ];
+  
+  let lastError = null;
+  for (const tryModel of modelNamesToTry) {
+    try {
+      logger.info('Trying Gemini model', { model: tryModel });
+      const geminiResponse = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${tryModel}:generateContent?key=${geminiKeyValue}`,
+        {
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
+          }]
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        const result = geminiResponse.data.candidates[0].content.parts[0].text;
+        logger.info('Gemini response generated', { model: tryModel, length: result.length });
+        return result;
+      } else {
+        logger.warn('Unexpected Gemini API response format', { model: tryModel, data: geminiResponse.data });
+      }
+    } catch (error) {
+      lastError = error;
+      logger.warn('Model failed, trying next', { model: tryModel, error: error.response?.data?.error?.message || error.message });
+      continue;
+    }
+  }
+
+  throw lastError || new Error('All model attempts failed');
+}
+
+// Explain It Feature: Explain what a company does
+exports.explainCompany = onRequest(
+  {
+    region: 'us-east4',
+    cors: true,
+    secrets: [geminiKey, alphaKey]
+  },
+  async (req, res) => {
+    const input = (req.query.symbol || req.query.name || '').trim();
+    logger.info('explainCompany invoked', { input });
+    
+    try {
+      if (!input) {
+        return res.status(400).json({ error: 'Stock symbol or company name is required' });
+      }
+
+      const alphaKeyValue = alphaKey.value();
+      const geminiKeyValue = geminiKey.value();
+
+      if (!alphaKeyValue || !geminiKeyValue) {
+        logger.error('Missing API keys');
+        return res.status(500).json({ error: 'API keys not configured' });
+      }
+
+      // Search for symbol (handles both symbol and company name)
+      let symbolResult;
+      try {
+        symbolResult = await searchSymbol(input, alphaKeyValue, logger);
+      } catch (error) {
+        logger.error('Symbol search failed', { input, error: error.message });
+        return res.status(404).json({ 
+          error: `Could not find stock for "${input}". Please check the symbol or company name and try again.`,
+          suggestion: 'Try searching with the stock ticker symbol (e.g., AAPL) or full company name (e.g., Apple Inc)'
+        });
+      }
+
+      const symbol = symbolResult.symbol;
+      const resolvedName = symbolResult.name;
+      const hasMultipleMatches = symbolResult.allMatches && symbolResult.allMatches.length > 1;
+
+      // Fetch company overview from Alpha Vantage
+      let companyData = null;
+      try {
+        const overviewResponse = await axios.get('https://www.alphavantage.co/query', {
+          params: {
+            function: 'OVERVIEW',
+            symbol: symbol,
+            apikey: alphaKeyValue
+          }
+        });
+
+        if (overviewResponse.data && overviewResponse.data.Symbol) {
+          companyData = {
+            symbol: overviewResponse.data.Symbol,
+            name: overviewResponse.data.Name,
+            description: overviewResponse.data.Description,
+            sector: overviewResponse.data.Sector,
+            industry: overviewResponse.data.Industry,
+            marketCap: overviewResponse.data.MarketCapitalization,
+            peRatio: overviewResponse.data.PERatio,
+            dividendYield: overviewResponse.data.DividendYield,
+            eps: overviewResponse.data.EPS,
+            beta: overviewResponse.data.Beta
+          };
+          logger.info('Company overview fetched', { symbol, name: companyData.name });
+        } else if (overviewResponse.data.Note || overviewResponse.data['Error Message']) {
+          throw new Error(overviewResponse.data.Note || overviewResponse.data['Error Message'] || 'API rate limit or invalid symbol');
+        }
+      } catch (error) {
+        logger.error('Alpha Vantage API error', { error: error.message });
+        // Continue even if overview fails, we can still use price data
+      }
+
+      // Fetch current price data as fallback
+      let priceData = null;
+      try {
+        const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
+          params: {
+            function: 'GLOBAL_QUOTE',
+            symbol: symbol,
+            apikey: alphaKeyValue
+          }
+        });
+
+        if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
+          const quote = quoteResponse.data['Global Quote'];
+          priceData = {
+            price: parseFloat(quote['05. price']),
+            change: parseFloat(quote['09. change']),
+            changePercent: parseFloat(quote['10. change percent'].replace('%', ''))
+          };
+        }
+      } catch (error) {
+        logger.warn('Could not fetch price data', { error: error.message });
+      }
+
+      if (!companyData && !priceData) {
+        return res.status(404).json({ error: `Could not find information for ${symbol}. Please check the symbol and try again.` });
+      }
+
+      // Generate AI explanation using Gemini
+      let explanation = 'Unable to generate explanation at this time.';
+      try {
+        const prompt = `You are a financial education assistant for young investors. Explain what ${companyData?.name || symbol} (${symbol}) does in simple, beginner-friendly terms.
+
+${companyData ? `
+Company Information:
+- Name: ${companyData.name}
+- Sector: ${companyData.sector || 'N/A'}
+- Industry: ${companyData.industry || 'N/A'}
+- Description: ${companyData.description || 'N/A'}
+${companyData.marketCap ? `- Market Cap: $${parseInt(companyData.marketCap).toLocaleString()}` : ''}
+${companyData.peRatio ? `- P/E Ratio: ${companyData.peRatio}` : ''}
+` : ''}
+${priceData ? `
+Current Stock Price: $${priceData.price.toFixed(2)} (${priceData.changePercent >= 0 ? '+' : ''}${priceData.changePercent.toFixed(2)}%)
+` : ''}
+
+Provide a clear, concise explanation (3-4 sentences) that:
+1. Explains what the company does in simple terms
+2. Describes what products or services they offer
+3. Mentions the industry/sector they operate in
+4. Keeps it educational and easy to understand for beginners
+
+Focus on making it accessible and interesting for young investors who may not be familiar with the company.`;
+
+        explanation = await callGeminiAPI(prompt, geminiKeyValue, logger);
+      } catch (error) {
+        logger.error('Gemini API error', { error: error.message });
+        const errorMessage = error.response?.data?.error?.message || error.message;
+        if (errorMessage.includes('quota') || errorMessage.includes('Quota exceeded')) {
+          explanation = '⚠️ AI explanation temporarily unavailable due to API quota limits. Please try again later.';
+        } else {
+          explanation = `Unable to generate AI explanation: ${errorMessage}`;
+        }
+      }
+
+      // Return response
+      res.json({
+        success: true,
+        symbol: symbol,
+        companyName: companyData?.name || resolvedName || symbol,
+        sector: companyData?.sector || null,
+        industry: companyData?.industry || null,
+        explanation: explanation,
+        price: priceData?.price || null,
+        priceChange: priceData ? {
+          change: priceData.change,
+          changePercent: priceData.changePercent
+        } : null,
+        searchInfo: hasMultipleMatches ? {
+          input: input,
+          matchedSymbol: symbol,
+          otherMatches: symbolResult.allMatches.slice(1, 4).map(m => ({
+            symbol: m.symbol,
+            name: m.name
+          }))
+        } : null
+      });
+
+    } catch (error) {
+      logger.error('explainCompany error', { error: error.message, stack: error.stack });
+      res.status(500).json({ error: 'Failed to explain company', message: error.message });
+    }
+  }
+);
+
+// Stock Recommendation Feature: Get buy/hold/sell recommendation
+exports.getStockRecommendation = onRequest(
+  {
+    region: 'us-east4',
+    cors: true,
+    secrets: [geminiKey, alphaKey]
+  },
+  async (req, res) => {
+    const input = (req.query.symbol || req.query.name || '').trim();
+    logger.info('getStockRecommendation invoked', { input });
+    
+    try {
+      if (!input) {
+        return res.status(400).json({ error: 'Stock symbol or company name is required' });
+      }
+
+      const alphaKeyValue = alphaKey.value();
+      const geminiKeyValue = geminiKey.value();
+
+      if (!alphaKeyValue || !geminiKeyValue) {
+        logger.error('Missing API keys');
+        return res.status(500).json({ error: 'API keys not configured' });
+      }
+
+      // Search for symbol (handles both symbol and company name)
+      let symbolResult;
+      try {
+        symbolResult = await searchSymbol(input, alphaKeyValue, logger);
+      } catch (error) {
+        logger.error('Symbol search failed', { input, error: error.message });
+        return res.status(404).json({ 
+          error: `Could not find stock for "${input}". Please check the symbol or company name and try again.`,
+          suggestion: 'Try searching with the stock ticker symbol (e.g., AAPL) or full company name (e.g., Apple Inc)'
+        });
+      }
+
+      const symbol = symbolResult.symbol;
+      const resolvedName = symbolResult.name;
+      const hasMultipleMatches = symbolResult.allMatches && symbolResult.allMatches.length > 1;
+
+      // Fetch current price and recent data
+      let quoteData = null;
+      try {
+        const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
+          params: {
+            function: 'GLOBAL_QUOTE',
+            symbol: symbol,
+            apikey: alphaKeyValue
+          }
+        });
+
+        if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
+          const quote = quoteResponse.data['Global Quote'];
+          quoteData = {
+            symbol: quote['01. symbol'],
+            price: parseFloat(quote['05. price']),
+            change: parseFloat(quote['09. change']),
+            changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
+            high: parseFloat(quote['03. high']),
+            low: parseFloat(quote['04. low']),
+            volume: quote['06. volume'],
+            previousClose: parseFloat(quote['08. previous close'])
+          };
+        } else if (quoteResponse.data.Note || quoteResponse.data['Error Message']) {
+          throw new Error(quoteResponse.data.Note || quoteResponse.data['Error Message'] || 'API rate limit or invalid symbol');
+        }
+      } catch (error) {
+        logger.error('Alpha Vantage quote error', { error: error.message });
+        return res.status(500).json({ error: `Could not fetch stock data: ${error.message}` });
+      }
+
+      if (!quoteData) {
+        return res.status(404).json({ error: `Could not find stock data for ${symbol}` });
+      }
+
+      // Fetch company overview for additional context
+      let companyData = null;
+      try {
+        const overviewResponse = await axios.get('https://www.alphavantage.co/query', {
+          params: {
+            function: 'OVERVIEW',
+            symbol: symbol,
+            apikey: alphaKeyValue
+          }
+        });
+
+        if (overviewResponse.data && overviewResponse.data.Symbol) {
+          companyData = {
+            name: overviewResponse.data.Name,
+            sector: overviewResponse.data.Sector,
+            industry: overviewResponse.data.Industry,
+            peRatio: overviewResponse.data.PERatio,
+            dividendYield: overviewResponse.data.DividendYield,
+            eps: overviewResponse.data.EPS,
+            beta: overviewResponse.data.Beta,
+            fiftyTwoWeekHigh: overviewResponse.data['52WeekHigh'],
+            fiftyTwoWeekLow: overviewResponse.data['52WeekLow']
+          };
+        }
+      } catch (error) {
+        logger.warn('Could not fetch company overview', { error: error.message });
+        // Continue without overview data
+      }
+
+      // Generate AI recommendation using Gemini
+      let recommendation = null;
+      try {
+        const prompt = `You are a financial education assistant for young investors. Analyze ${companyData?.name || symbol} (${symbol}) and provide a buy/hold/sell recommendation.
+
+Stock Data:
+- Current Price: $${quoteData.price.toFixed(2)}
+- Change Today: ${quoteData.change >= 0 ? '+' : ''}$${quoteData.change.toFixed(2)} (${quoteData.changePercent >= 0 ? '+' : ''}${quoteData.changePercent.toFixed(2)}%)
+- Day High: $${quoteData.high.toFixed(2)}
+- Day Low: $${quoteData.low.toFixed(2)}
+- Previous Close: $${quoteData.previousClose.toFixed(2)}
+- Volume: ${parseInt(quoteData.volume).toLocaleString()}
+
+${companyData ? `
+Company Information:
+- Name: ${companyData.name}
+- Sector: ${companyData.sector || 'N/A'}
+- Industry: ${companyData.industry || 'N/A'}
+${companyData.peRatio ? `- P/E Ratio: ${companyData.peRatio}` : ''}
+${companyData.dividendYield ? `- Dividend Yield: ${companyData.dividendYield}%` : ''}
+${companyData.eps ? `- EPS: $${companyData.eps}` : ''}
+${companyData.beta ? `- Beta: ${companyData.beta}` : ''}
+${companyData.fiftyTwoWeekHigh ? `- 52-Week High: $${companyData.fiftyTwoWeekHigh}` : ''}
+${companyData.fiftyTwoWeekLow ? `- 52-Week Low: $${companyData.fiftyTwoWeekLow}` : ''}
+` : ''}
+
+Provide a recommendation in the following JSON format:
+{
+  "recommendation": "BUY" | "HOLD" | "SELL",
+  "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "reasoning": "2-3 sentences explaining your reasoning in beginner-friendly terms",
+  "keyPoints": ["point 1", "point 2", "point 3"],
+  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
+  "timeHorizon": "SHORT" | "MEDIUM" | "LONG"
+}
+
+Important guidelines:
+- This is for educational purposes only, not actual investment advice
+- Consider the stock's recent performance, volatility, and fundamentals
+- Be conservative and educational in your approach
+- Explain risks clearly
+- Keep reasoning simple and accessible for beginners
+- If data is limited, indicate lower confidence
+
+Return ONLY valid JSON, no additional text.`;
+
+        const aiResponse = await callGeminiAPI(prompt, geminiKeyValue, logger);
+        
+        // Try to parse JSON from response (Gemini might add extra text)
+        let jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          recommendation = JSON.parse(jsonMatch[0]);
+        } else {
+          throw new Error('Could not parse recommendation JSON');
+        }
+
+        // Validate recommendation structure
+        if (!recommendation.recommendation || !['BUY', 'HOLD', 'SELL'].includes(recommendation.recommendation)) {
+          throw new Error('Invalid recommendation format');
+        }
+
+      } catch (error) {
+        logger.error('Gemini recommendation error', { error: error.message });
+        const errorMessage = error.response?.data?.error?.message || error.message;
+        if (errorMessage.includes('quota') || errorMessage.includes('Quota exceeded')) {
+          return res.status(503).json({ 
+            error: 'AI recommendation temporarily unavailable due to API quota limits. Please try again later.',
+            price: quoteData.price,
+            priceChange: {
+              change: quoteData.change,
+              changePercent: quoteData.changePercent
+            }
+          });
+        }
+        return res.status(500).json({ error: `Failed to generate recommendation: ${errorMessage}` });
+      }
+
+      // Return response
+      res.json({
+        success: true,
+        symbol: symbol,
+        companyName: companyData?.name || resolvedName || symbol,
+        currentPrice: quoteData.price,
+        priceChange: {
+          change: quoteData.change,
+          changePercent: quoteData.changePercent
+        },
+        recommendation: recommendation.recommendation,
+        confidence: recommendation.confidence || 'MEDIUM',
+        reasoning: recommendation.reasoning || 'Analysis completed',
+        keyPoints: recommendation.keyPoints || [],
+        riskLevel: recommendation.riskLevel || 'MEDIUM',
+        timeHorizon: recommendation.timeHorizon || 'MEDIUM',
+        disclaimer: 'This recommendation is for educational purposes only and should not be considered as financial advice. Always do your own research and consult with a financial advisor before making investment decisions.',
+        searchInfo: hasMultipleMatches ? {
+          input: input,
+          matchedSymbol: symbol,
+          otherMatches: symbolResult.allMatches.slice(1, 4).map(m => ({
+            symbol: m.symbol,
+            name: m.name
+          }))
+        } : null
+      });
+
+    } catch (error) {
+      logger.error('getStockRecommendation error', { error: error.message, stack: error.stack });
+      res.status(500).json({ error: 'Failed to get stock recommendation', message: error.message });
     }
   }
 );

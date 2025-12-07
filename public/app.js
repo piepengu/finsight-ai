@@ -453,9 +453,19 @@ function renderPortfolioChart(snapshots) {
   const ctx = canvas.getContext('2d');
 
   // Prepare data
-  const labels = snapshots.map(s => {
+  const labels = snapshots.map((s, index) => {
     const date = new Date(s.timestamp);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    // Check if this point is close to the previous one (within 1 hour)
+    const showSeconds = index > 0 && 
+      Math.abs(date.getTime() - new Date(snapshots[index - 1].timestamp).getTime()) < 3600000;
+    
+    if (showSeconds) {
+      // Show seconds when points are close together
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } else {
+      // Normal format for points that are far apart
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
   });
   
   const portfolioValues = snapshots.map(s => s.portfolioValue || 0);
@@ -789,6 +799,178 @@ function setupWatchlistListener(userId) {
   });
 }
 
+// Explain It Feature
+async function explainCompany() {
+  const symbolInput = document.getElementById('explain-symbol');
+  const messageDiv = document.getElementById('explain-message');
+  const resultDiv = document.getElementById('explain-result');
+  const explainBtn = document.getElementById('explain-btn');
+  
+  const symbol = symbolInput.value.trim().toUpperCase();
+  
+  if (!symbol) {
+    messageDiv.innerHTML = '<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px;">Please enter a stock symbol</div>';
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 3000);
+    return;
+  }
+
+  explainBtn.disabled = true;
+  explainBtn.textContent = 'Explaining...';
+  messageDiv.innerHTML = '<div style="color: #2563eb; padding: 0.5rem; background: #dbeafe; border-radius: 4px;">⏳ Fetching company information...</div>';
+  resultDiv.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/explainCompany?symbol=${encodeURIComponent(symbol)}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to explain company');
+    }
+
+    // Display result
+    document.getElementById('explain-company-name').textContent = `${data.companyName} (${data.symbol})`;
+    document.getElementById('explain-content').textContent = data.explanation;
+    
+    let priceInfo = '';
+    if (data.sector) {
+      priceInfo += `${data.sector}`;
+      if (data.industry) {
+        priceInfo += ` • ${data.industry}`;
+      }
+    }
+    if (data.price) {
+      const changeClass = data.priceChange?.changePercent >= 0 ? 'positive' : 'negative';
+      const changeSign = data.priceChange?.changePercent >= 0 ? '+' : '';
+      priceInfo += priceInfo ? ' • ' : '';
+      priceInfo += `Current Price: $${data.price.toFixed(2)} (${changeSign}${data.priceChange?.changePercent.toFixed(2)}%)`;
+    }
+    document.getElementById('explain-price-info').textContent = priceInfo || 'Price information unavailable';
+    
+    // Show multiple matches info if available
+    if (data.searchInfo && data.searchInfo.otherMatches && data.searchInfo.otherMatches.length > 0) {
+      const matchesHtml = `
+        <div style="margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 6px; font-size: 0.9rem; color: #92400e;">
+          <strong>💡 Other matches found:</strong> ${data.searchInfo.otherMatches.map(m => `${m.name} (${m.symbol})`).join(', ')}
+        </div>
+      `;
+      document.getElementById('explain-price-info').insertAdjacentHTML('afterend', matchesHtml);
+    }
+    
+    resultDiv.style.display = 'block';
+    messageDiv.innerHTML = '';
+    symbolInput.value = '';
+
+    // Scroll to result
+    resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  } catch (error) {
+    messageDiv.innerHTML = `<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px; animation: slideIn 0.3s ease-out;">❌ Error: ${error.message}</div>`;
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 5000);
+  } finally {
+    explainBtn.disabled = false;
+    explainBtn.textContent = 'Explain';
+  }
+}
+
+// Stock Recommendation Feature
+async function getStockRecommendation() {
+  const symbolInput = document.getElementById('recommendation-symbol');
+  const messageDiv = document.getElementById('recommendation-message');
+  const resultDiv = document.getElementById('recommendation-result');
+  const recommendationBtn = document.getElementById('recommendation-btn');
+  
+  const symbol = symbolInput.value.trim().toUpperCase();
+  
+  if (!symbol) {
+    messageDiv.innerHTML = '<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px;">Please enter a stock symbol</div>';
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 3000);
+    return;
+  }
+
+  recommendationBtn.disabled = true;
+  recommendationBtn.textContent = 'Analyzing...';
+  messageDiv.innerHTML = '<div style="color: #059669; padding: 0.5rem; background: #d1fae5; border-radius: 4px;">⏳ Analyzing stock and generating recommendation...</div>';
+  resultDiv.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/stockRecommendation?symbol=${encodeURIComponent(symbol)}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to get recommendation');
+    }
+
+    // Display result
+    document.getElementById('recommendation-company-name').textContent = `${data.companyName} (${data.symbol})`;
+    
+    const changeClass = data.priceChange?.changePercent >= 0 ? 'positive' : 'negative';
+    const changeSign = data.priceChange?.changePercent >= 0 ? '+' : '';
+    document.getElementById('recommendation-price').innerHTML = `
+      $${data.currentPrice.toFixed(2)} 
+      <span class="change ${changeClass}" style="font-size: 0.9rem; margin-left: 0.5rem;">
+        ${changeSign}$${data.priceChange?.change.toFixed(2)} (${changeSign}${data.priceChange?.changePercent.toFixed(2)}%)
+      </span>
+    `;
+    
+    // Recommendation badge
+    const badge = document.getElementById('recommendation-badge');
+    const rec = data.recommendation;
+    if (rec === 'BUY') {
+      badge.textContent = '🟢 BUY';
+      badge.style.background = '#d1fae5';
+      badge.style.color = '#065f46';
+    } else if (rec === 'HOLD') {
+      badge.textContent = '🟡 HOLD';
+      badge.style.background = '#fef3c7';
+      badge.style.color = '#92400e';
+    } else {
+      badge.textContent = '🔴 SELL';
+      badge.style.background = '#fee2e2';
+      badge.style.color = '#991b1b';
+    }
+    
+    document.getElementById('recommendation-confidence').textContent = data.confidence;
+    document.getElementById('recommendation-risk').textContent = data.riskLevel;
+    document.getElementById('recommendation-horizon').textContent = data.timeHorizon;
+    document.getElementById('recommendation-reasoning').textContent = data.reasoning;
+    
+    // Key points
+    const keyPointsList = document.getElementById('recommendation-keypoints');
+    if (data.keyPoints && data.keyPoints.length > 0) {
+      keyPointsList.innerHTML = data.keyPoints.map(point => `<li>${point}</li>`).join('');
+    } else {
+      keyPointsList.innerHTML = '<li>No key points available</li>';
+    }
+    
+    document.getElementById('recommendation-disclaimer').textContent = data.disclaimer;
+    
+    // Show multiple matches info if available
+    if (data.searchInfo && data.searchInfo.otherMatches && data.searchInfo.otherMatches.length > 0) {
+      const matchesHtml = `
+        <div style="margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 6px; font-size: 0.9rem; color: #92400e;">
+          <strong>💡 Other matches found:</strong> ${data.searchInfo.otherMatches.map(m => `${m.name} (${m.symbol})`).join(', ')}
+        </div>
+      `;
+      const disclaimerDiv = document.getElementById('recommendation-disclaimer').parentElement;
+      disclaimerDiv.insertAdjacentHTML('beforebegin', matchesHtml);
+    }
+    
+    resultDiv.style.display = 'block';
+    messageDiv.innerHTML = '';
+    symbolInput.value = '';
+
+    // Scroll to result
+    resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  } catch (error) {
+    messageDiv.innerHTML = `<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px; animation: slideIn 0.3s ease-out;">❌ Error: ${error.message}</div>`;
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 5000);
+  } finally {
+    recommendationBtn.disabled = false;
+    recommendationBtn.textContent = 'Get Recommendation';
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   const btn = document.getElementById('fetch-btn');
   if (btn) {
@@ -806,6 +988,22 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('buy-btn').addEventListener('click', buyStock);
     document.getElementById('sell-btn').addEventListener('click', sellStock);
     document.getElementById('add-watchlist-btn').addEventListener('click', addToWatchlist);
+    
+    // Explain It feature
+    document.getElementById('explain-btn').addEventListener('click', explainCompany);
+    document.getElementById('explain-symbol').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        explainCompany();
+      }
+    });
+    
+    // Stock Recommendation feature
+    document.getElementById('recommendation-btn').addEventListener('click', getStockRecommendation);
+    document.getElementById('recommendation-symbol').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        getStockRecommendation();
+      }
+    });
     
     // Allow Enter key to add to watchlist
     const watchlistSymbolInput = document.getElementById('watchlist-symbol');

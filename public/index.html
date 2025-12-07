@@ -347,6 +347,87 @@
       </div>
     </div>
 
+    <!-- Explain It Feature -->
+    <div id="explain-section" style="margin-bottom: 2rem;">
+      <h2>🔍 Explain It</h2>
+      <p style="color: #6b7280; margin-bottom: 1rem;">Learn what any company does in simple terms</p>
+      
+      <div style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: end;">
+          <div>
+            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol or Company Name</label>
+            <input type="text" id="explain-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+          </div>
+          <button id="explain-btn" style="padding: 0.75rem 1.5rem; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Explain</button>
+        </div>
+        <div id="explain-message" style="margin-top: 1rem;"></div>
+      </div>
+
+      <div id="explain-result" style="display: none; background: #eff6ff; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #3b82f6; margin-bottom: 1.5rem;">
+        <h3 id="explain-company-name" style="margin-top: 0; color: #1e40af;"></h3>
+        <div id="explain-content" style="line-height: 1.6; color: #1e40af; margin-bottom: 1rem;"></div>
+        <div id="explain-price-info" style="font-size: 0.9rem; color: #6b7280;"></div>
+      </div>
+    </div>
+
+    <!-- Stock Recommendation Feature -->
+    <div id="recommendation-section" style="margin-bottom: 2rem;">
+      <h2>💡 Stock Recommendation</h2>
+      <p style="color: #6b7280; margin-bottom: 1rem;">Get AI-powered buy/hold/sell recommendations</p>
+      
+      <div style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: end;">
+          <div>
+            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol or Company Name</label>
+            <input type="text" id="recommendation-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+          </div>
+          <button id="recommendation-btn" style="padding: 0.75rem 1.5rem; background: #059669; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Get Recommendation</button>
+        </div>
+        <div id="recommendation-message" style="margin-top: 1rem;"></div>
+      </div>
+
+      <div id="recommendation-result" style="display: none; background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid #e5e7eb;">
+          <div>
+            <h3 id="recommendation-company-name" style="margin: 0 0 0.5rem 0; color: #111827;"></h3>
+            <div id="recommendation-price" style="font-size: 1.2rem; font-weight: 600; color: #111827;"></div>
+          </div>
+          <div id="recommendation-badge" style="padding: 0.5rem 1rem; border-radius: 6px; font-weight: 700; font-size: 1.1rem;"></div>
+        </div>
+        
+        <div style="margin-bottom: 1.5rem;">
+          <div style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 150px;">
+              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 0.25rem;">Confidence</div>
+              <div id="recommendation-confidence" style="font-weight: 600; color: #111827;"></div>
+            </div>
+            <div style="flex: 1; min-width: 150px;">
+              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 0.25rem;">Risk Level</div>
+              <div id="recommendation-risk" style="font-weight: 600; color: #111827;"></div>
+            </div>
+            <div style="flex: 1; min-width: 150px;">
+              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 0.25rem;">Time Horizon</div>
+              <div id="recommendation-horizon" style="font-weight: 600; color: #111827;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 1.5rem;">
+          <h4 style="margin: 0 0 0.75rem 0; color: #374151; font-size: 1rem;">Reasoning</h4>
+          <div id="recommendation-reasoning" style="line-height: 1.6; color: #4b5563; background: #f9fafb; padding: 1rem; border-radius: 6px;"></div>
+        </div>
+
+        <div style="margin-bottom: 1.5rem;">
+          <h4 style="margin: 0 0 0.75rem 0; color: #374151; font-size: 1rem;">Key Points</h4>
+          <ul id="recommendation-keypoints" style="margin: 0; padding-left: 1.5rem; color: #4b5563; line-height: 1.8;"></ul>
+        </div>
+
+        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 6px; font-size: 0.9rem; color: #92400e;">
+          <strong>⚠️ Disclaimer:</strong> <span id="recommendation-disclaimer"></span>
+        </div>
+      </div>
+    </div>
+
     <button id="fetch-btn">Get Today's Briefing</button>
     
     <div id="output">

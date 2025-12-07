@@ -112,12 +112,49 @@
 - **Smart Data Handling:** Ensures at least 2 data points for meaningful chart display
 - **Error Handling:** Graceful fallback when no historical data exists
 
+## Latest Updates (Explain It & Stock Recommendations - Completed)
+
+### ✅ Explain It Feature
+- **Backend Function:** `explainCompany` Cloud Function deployed
+  - Fetches company overview from Alpha Vantage (OVERVIEW endpoint)
+  - Uses Gemini AI to generate beginner-friendly explanations
+  - Returns company name, sector, industry, explanation, and current price
+- **Frontend UI:** Search interface with results display
+  - Input field for stock symbol
+  - Displays company explanation, sector/industry, and price information
+  - Styled to match existing design
+
+### ✅ Stock Recommendation Feature
+- **Backend Function:** `getStockRecommendation` Cloud Function deployed
+  - Fetches stock price data and company fundamentals from Alpha Vantage
+  - Uses Gemini AI to analyze and provide buy/hold/sell recommendations
+  - Returns structured recommendation with:
+    - Recommendation (BUY/HOLD/SELL) with color-coded badge
+    - Confidence level (HIGH/MEDIUM/LOW)
+    - Reasoning (2-3 sentences)
+    - Key points (array)
+    - Risk level (LOW/MEDIUM/HIGH)
+    - Time horizon (SHORT/MEDIUM/LONG)
+    - Educational disclaimer
+- **Frontend UI:** Comprehensive recommendation display
+  - Search interface for stock symbol
+  - Visual recommendation badge (green/yellow/red)
+  - Detailed analysis display with all recommendation metrics
+  - Professional layout matching existing design
+
+### ✅ Helper Function
+- **`callGeminiAPI`:** Reusable Gemini API caller with automatic model fallback
+  - Handles model discovery and fallback logic
+  - Used by both explainCompany and getStockRecommendation functions
+
 ## Next Steps
 1. **Future enhancements:**
    - Add retry logic with exponential backoff for rate limits
    - Consider scheduled function for daily auto-generation
    - Add more data visualization (charts/graphs)
-   - Add watchlist feature
+   - ✅ Watchlist feature (completed)
+   - ✅ Explain It feature (completed)
+   - ✅ Stock recommendations (completed)
 
 3. **Optional: Fix local emulators**
    - Install JDK 17 (Adoptium Temurin) for Firestore emulator

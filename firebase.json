@@ -80,6 +80,20 @@
         }
       },
       {
+        "source": "/api/explainCompany",
+        "function": {
+          "functionId": "explainCompany",
+          "region": "us-east4"
+        }
+      },
+      {
+        "source": "/api/stockRecommendation",
+        "function": {
+          "functionId": "getStockRecommendation",
+          "region": "us-east4"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
