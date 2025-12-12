@@ -521,7 +521,12 @@ async function searchSymbol(input, alphaKeyValue, logger) {
         }
       });
       
-      if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
+      // Check for rate limit or API errors
+      if (quoteResponse.data.Note || quoteResponse.data['Error Message'] || quoteResponse.data['Information']) {
+        const errorMsg = quoteResponse.data.Note || quoteResponse.data['Error Message'] || quoteResponse.data['Information'];
+        logger.warn('Direct symbol lookup rate limited', { symbol: trimmedInput, error: errorMsg });
+        // Don't throw here, fall through to search which might work
+      } else if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
         const quote = quoteResponse.data['Global Quote'];
         return {
           symbol: quote['01. symbol'],
@@ -531,6 +536,7 @@ async function searchSymbol(input, alphaKeyValue, logger) {
       }
     } catch (error) {
       logger.warn('Direct symbol lookup failed, trying search', { symbol: trimmedInput, error: error.message });
+      // Don't throw here, fall through to search
     }
   }
   
@@ -544,8 +550,16 @@ async function searchSymbol(input, alphaKeyValue, logger) {
       }
     });
     
-    if (searchResponse.data.Note || searchResponse.data['Error Message']) {
-      throw new Error(searchResponse.data.Note || searchResponse.data['Error Message'] || 'API rate limit');
+    // Check for rate limit or API errors
+    if (searchResponse.data.Note || searchResponse.data['Error Message'] || searchResponse.data['Information']) {
+      const errorMsg = searchResponse.data.Note || searchResponse.data['Error Message'] || searchResponse.data['Information'];
+      const isRateLimit = errorMsg.toLowerCase().includes('rate') || errorMsg.toLowerCase().includes('call frequency') || errorMsg.toLowerCase().includes('api call');
+      
+      if (isRateLimit) {
+        throw new Error(`Alpha Vantage API rate limit reached. Please wait a minute and try again. (Free tier allows 5 calls per minute)`);
+      } else {
+        throw new Error(`Alpha Vantage API error: ${errorMsg}`);
+      }
     }
     
     if (searchResponse.data.bestMatches && searchResponse.data.bestMatches.length > 0) {
@@ -1222,8 +1236,17 @@ exports.explainCompany = onRequest(
         symbolResult = await searchSymbol(input, alphaKeyValue, logger);
       } catch (error) {
         logger.error('Symbol search failed', { input, error: error.message });
+        
+        // Check if it's a rate limit error
+        if (error.message.includes('rate limit') || error.message.includes('API rate limit')) {
+          return res.status(503).json({ 
+            error: error.message,
+            suggestion: 'Alpha Vantage free tier has rate limits (5 calls per minute). Please wait a minute before trying again.'
+          });
+        }
+        
         return res.status(404).json({ 
-          error: `Could not find stock for "${input}". Please check the symbol or company name and try again.`,
+          error: `Could not find stock for "${input}". ${error.message.includes('Alpha Vantage') ? error.message : 'Please check the symbol or company name and try again.'}`,
           suggestion: 'Try searching with the stock ticker symbol (e.g., AAPL) or full company name (e.g., Apple Inc)'
         });
       }
@@ -1289,7 +1312,10 @@ exports.explainCompany = onRequest(
       }
 
       if (!companyData && !priceData) {
-        return res.status(404).json({ error: `Could not find information for ${symbol}. Please check the symbol and try again.` });
+        return res.status(404).json({ 
+          error: `Could not find information for ${symbol}. Please check the symbol and try again.`,
+          suggestion: 'Try searching with the stock ticker symbol (e.g., AAPL) or full company name (e.g., Apple Inc)'
+        });
       }
 
       // Generate AI explanation using Gemini
@@ -1389,8 +1415,17 @@ exports.getStockRecommendation = onRequest(
         symbolResult = await searchSymbol(input, alphaKeyValue, logger);
       } catch (error) {
         logger.error('Symbol search failed', { input, error: error.message });
+        
+        // Check if it's a rate limit error
+        if (error.message.includes('rate limit') || error.message.includes('API rate limit')) {
+          return res.status(503).json({ 
+            error: error.message,
+            suggestion: 'Alpha Vantage free tier has rate limits (5 calls per minute). Please wait a minute before trying again.'
+          });
+        }
+        
         return res.status(404).json({ 
-          error: `Could not find stock for "${input}". Please check the symbol or company name and try again.`,
+          error: `Could not find stock for "${input}". ${error.message.includes('Alpha Vantage') ? error.message : 'Please check the symbol or company name and try again.'}`,
           suggestion: 'Try searching with the stock ticker symbol (e.g., AAPL) or full company name (e.g., Apple Inc)'
         });
       }

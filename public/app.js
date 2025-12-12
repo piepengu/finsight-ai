@@ -821,10 +821,20 @@ async function explainCompany() {
 
   try {
     const res = await fetch(`/api/explainCompany?symbol=${encodeURIComponent(symbol)}`);
-    const data = await res.json();
+    
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseError) {
+      // If response isn't JSON, create a generic error
+      throw new Error(`Server error: ${res.status} ${res.statusText}`);
+    }
 
     if (!res.ok) {
-      throw new Error(data.error || 'Failed to explain company');
+      // Create error with response data
+      const error = new Error(data.error || 'Failed to explain company');
+      error.suggestion = data.suggestion;
+      throw error;
     }
 
     // Display result
@@ -864,8 +874,14 @@ async function explainCompany() {
     resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   } catch (error) {
-    messageDiv.innerHTML = `<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px; animation: slideIn 0.3s ease-out;">❌ Error: ${error.message}</div>`;
-    setTimeout(() => { messageDiv.innerHTML = ''; }, 5000);
+    let errorHtml = `<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px; animation: slideIn 0.3s ease-out;">❌ ${error.message || 'An error occurred'}</div>`;
+    
+    if (error.suggestion) {
+      errorHtml += `<div style="margin-top: 0.5rem; padding: 0.75rem; background: #fef3c7; color: #92400e; border-radius: 6px; font-size: 0.9rem;">💡 ${error.suggestion}</div>`;
+    }
+    
+    messageDiv.innerHTML = errorHtml;
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 8000);
   } finally {
     explainBtn.disabled = false;
     explainBtn.textContent = 'Explain';
@@ -894,10 +910,20 @@ async function getStockRecommendation() {
 
   try {
     const res = await fetch(`/api/stockRecommendation?symbol=${encodeURIComponent(symbol)}`);
-    const data = await res.json();
+    
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseError) {
+      // If response isn't JSON, create a generic error
+      throw new Error(`Server error: ${res.status} ${res.statusText}`);
+    }
 
     if (!res.ok) {
-      throw new Error(data.error || 'Failed to get recommendation');
+      // Create error with response data
+      const error = new Error(data.error || 'Failed to get recommendation');
+      error.suggestion = data.suggestion;
+      throw error;
     }
 
     // Display result
@@ -963,8 +989,14 @@ async function getStockRecommendation() {
     resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   } catch (error) {
-    messageDiv.innerHTML = `<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px; animation: slideIn 0.3s ease-out;">❌ Error: ${error.message}</div>`;
-    setTimeout(() => { messageDiv.innerHTML = ''; }, 5000);
+    let errorHtml = `<div class="error" style="padding: 0.75rem; background: #fee2e2; color: #991b1b; border-radius: 6px; animation: slideIn 0.3s ease-out;">❌ ${error.message || 'An error occurred'}</div>`;
+    
+    if (error.suggestion) {
+      errorHtml += `<div style="margin-top: 0.5rem; padding: 0.75rem; background: #fef3c7; color: #92400e; border-radius: 6px; font-size: 0.9rem;">💡 ${error.suggestion}</div>`;
+    }
+    
+    messageDiv.innerHTML = errorHtml;
+    setTimeout(() => { messageDiv.innerHTML = ''; }, 8000);
   } finally {
     recommendationBtn.disabled = false;
     recommendationBtn.textContent = 'Get Recommendation';
