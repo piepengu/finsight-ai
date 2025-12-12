@@ -524,9 +524,24 @@ async function searchSymbol(input, alphaKeyValue, logger) {
       // Check for rate limit or API errors
       if (quoteResponse.data.Note || quoteResponse.data['Error Message'] || quoteResponse.data['Information']) {
         const errorMsg = quoteResponse.data.Note || quoteResponse.data['Error Message'] || quoteResponse.data['Information'];
-        logger.warn('Direct symbol lookup rate limited', { symbol: trimmedInput, error: errorMsg });
-        // Don't throw here, fall through to search which might work
-      } else if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
+        const errorLower = errorMsg.toLowerCase();
+        
+        // Check if it's actually a rate limit (not just an info message)
+        const isRateLimit = errorLower.includes('rate limit') || 
+                           errorLower.includes('call frequency') || 
+                           errorLower.includes('5 calls per minute');
+        
+        if (isRateLimit) {
+          logger.warn('Direct symbol lookup rate limited', { symbol: trimmedInput, error: errorMsg });
+          // Don't throw here, fall through to search which might work
+        } else {
+          // For other messages (like "Thank you for using Alpha Vantage"), just log and continue
+          logger.info('Direct symbol lookup info message', { symbol: trimmedInput, message: errorMsg });
+        }
+      }
+      
+      // Check if we got valid quote data
+      if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
         const quote = quoteResponse.data['Global Quote'];
         return {
           symbol: quote['01. symbol'],
@@ -553,12 +568,21 @@ async function searchSymbol(input, alphaKeyValue, logger) {
     // Check for rate limit or API errors
     if (searchResponse.data.Note || searchResponse.data['Error Message'] || searchResponse.data['Information']) {
       const errorMsg = searchResponse.data.Note || searchResponse.data['Error Message'] || searchResponse.data['Information'];
-      const isRateLimit = errorMsg.toLowerCase().includes('rate') || errorMsg.toLowerCase().includes('call frequency') || errorMsg.toLowerCase().includes('api call');
+      const errorLower = errorMsg.toLowerCase();
+      
+      // More specific rate limit detection
+      const isRateLimit = errorLower.includes('rate limit') || 
+                         errorLower.includes('call frequency') || 
+                         errorLower.includes('api call') ||
+                         errorLower.includes('5 calls per minute') ||
+                         errorLower.includes('thank you for using alpha vantage');
       
       if (isRateLimit) {
         throw new Error(`Alpha Vantage API rate limit reached. Please wait a minute and try again. (Free tier allows 5 calls per minute)`);
       } else {
-        throw new Error(`Alpha Vantage API error: ${errorMsg}`);
+        // For other errors, log but don't throw - might still have data
+        logger.warn('Alpha Vantage API warning', { error: errorMsg });
+        // Continue to check if we have matches anyway
       }
     }
     
