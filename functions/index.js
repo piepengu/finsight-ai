@@ -543,10 +543,21 @@ async function searchSymbol(input, alphaKeyValue, logger) {
       // Check if we got valid quote data
       if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
         const quote = quoteResponse.data['Global Quote'];
+        // Return quote data to avoid redundant API call later
         return {
           symbol: quote['01. symbol'],
           name: quote['01. symbol'], // Name not in quote, will be fetched later
-          matchType: 'direct'
+          matchType: 'direct',
+          quoteData: {
+            symbol: quote['01. symbol'],
+            price: parseFloat(quote['05. price']),
+            change: parseFloat(quote['09. change']),
+            changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
+            high: parseFloat(quote['03. high']),
+            low: parseFloat(quote['04. low']),
+            volume: quote['06. volume'],
+            previousClose: parseFloat(quote['08. previous close'])
+          }
         };
       }
     } catch (error) {
@@ -1280,6 +1291,9 @@ exports.explainCompany = onRequest(
       const resolvedName = symbolResult.name;
       const hasMultipleMatches = symbolResult.allMatches && symbolResult.allMatches.length > 1;
 
+      // Use quote data from searchSymbol if available (avoids redundant API call)
+      let priceData = symbolResult.quoteData || null;
+
       // Fetch company overview from Alpha Vantage
       let companyData = null;
       try {
@@ -1313,27 +1327,36 @@ exports.explainCompany = onRequest(
         // Continue even if overview fails, we can still use price data
       }
 
-      // Fetch current price data as fallback
-      let priceData = null;
-      try {
-        const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
-          params: {
-            function: 'GLOBAL_QUOTE',
-            symbol: symbol,
-            apikey: alphaKeyValue
-          }
-        });
+      // Fetch current price data as fallback (only if not already fetched by searchSymbol)
+      if (!priceData) {
+        try {
+          const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
+            params: {
+              function: 'GLOBAL_QUOTE',
+              symbol: symbol,
+              apikey: alphaKeyValue
+            }
+          });
 
-        if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
-          const quote = quoteResponse.data['Global Quote'];
-          priceData = {
-            price: parseFloat(quote['05. price']),
-            change: parseFloat(quote['09. change']),
-            changePercent: parseFloat(quote['10. change percent'].replace('%', ''))
-          };
+          if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
+            const quote = quoteResponse.data['Global Quote'];
+            priceData = {
+              price: parseFloat(quote['05. price']),
+              change: parseFloat(quote['09. change']),
+              changePercent: parseFloat(quote['10. change percent'].replace('%', ''))
+            };
+          }
+        } catch (error) {
+          logger.warn('Could not fetch price data', { error: error.message });
         }
-      } catch (error) {
-        logger.warn('Could not fetch price data', { error: error.message });
+      } else {
+        // Use price data from searchSymbol, convert to expected format
+        priceData = {
+          price: priceData.price,
+          change: priceData.change,
+          changePercent: priceData.changePercent
+        };
+        logger.info('Using price data from searchSymbol (avoided redundant API call)', { symbol, price: priceData.price });
       }
 
       if (!companyData && !priceData) {
@@ -1470,6 +1493,16 @@ exports.getStockRecommendation = onRequest(
           }
         });
 
+        // Log the response for debugging
+        logger.info('Quote API response', { 
+          symbol, 
+          hasGlobalQuote: !!quoteResponse.data['Global Quote'],
+          hasPrice: !!(quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']),
+          hasNote: !!quoteResponse.data.Note,
+          hasError: !!quoteResponse.data['Error Message'],
+          hasInfo: !!quoteResponse.data['Information']
+        });
+
         if (quoteResponse.data['Global Quote'] && quoteResponse.data['Global Quote']['05. price']) {
           const quote = quoteResponse.data['Global Quote'];
           quoteData = {
@@ -1482,16 +1515,59 @@ exports.getStockRecommendation = onRequest(
             volume: quote['06. volume'],
             previousClose: parseFloat(quote['08. previous close'])
           };
-        } else if (quoteResponse.data.Note || quoteResponse.data['Error Message']) {
-          throw new Error(quoteResponse.data.Note || quoteResponse.data['Error Message'] || 'API rate limit or invalid symbol');
+          logger.info('Quote data extracted successfully', { symbol, price: quoteData.price });
+        } else {
+          // Check for API messages/errors
+          if (quoteResponse.data.Note || quoteResponse.data['Error Message'] || quoteResponse.data['Information']) {
+            const errorMsg = quoteResponse.data.Note || quoteResponse.data['Error Message'] || quoteResponse.data['Information'];
+            const errorLower = errorMsg.toLowerCase();
+            
+            // Check if it's actually a rate limit
+            const isRateLimit = errorLower.includes('rate limit') || 
+                               errorLower.includes('call frequency') || 
+                               errorLower.includes('5 calls per minute');
+            
+            if (isRateLimit) {
+              logger.warn('Rate limit detected in quote fetch', { symbol, message: errorMsg });
+              throw new Error(`Alpha Vantage API rate limit reached. Please wait a minute and try again. (Free tier allows 5 calls per minute)`);
+            } else {
+              // For other messages, log but don't throw - might be informational
+              logger.warn('Alpha Vantage API message (no quote data)', { symbol, message: errorMsg, fullResponse: quoteResponse.data });
+            }
+          } else {
+            // No quote data and no error message - symbol might be invalid or data format issue
+            logger.warn('No quote data returned for symbol', { 
+              symbol, 
+              hasGlobalQuote: !!quoteResponse.data['Global Quote'],
+              globalQuoteKeys: quoteResponse.data['Global Quote'] ? Object.keys(quoteResponse.data['Global Quote']) : null,
+              responseKeys: Object.keys(quoteResponse.data || {})
+            });
+          }
         }
       } catch (error) {
-        logger.error('Alpha Vantage quote error', { error: error.message });
-        return res.status(500).json({ error: `Could not fetch stock data: ${error.message}` });
+        logger.error('Alpha Vantage quote error', { symbol, error: error.message, stack: error.stack });
+        
+        // Check if it's a rate limit error
+        if (error.message.includes('rate limit')) {
+          return res.status(503).json({ 
+            error: error.message,
+            suggestion: 'Alpha Vantage free tier has rate limits (5 calls per minute). Please wait a minute before trying again.'
+          });
+        }
+        
+        return res.status(500).json({ error: `Could not fetch stock data for ${symbol}: ${error.message}` });
       }
 
       if (!quoteData) {
-        return res.status(404).json({ error: `Could not find stock data for ${symbol}` });
+        logger.error('Quote data is null after fetch attempt', { 
+          symbol, 
+          resolvedName,
+          searchResult: symbolResult 
+        });
+        return res.status(404).json({ 
+          error: `Could not find stock data for ${symbol}. The symbol may be invalid, the market may be closed, or Alpha Vantage may not have data for this symbol.`,
+          suggestion: 'Please verify the stock symbol and try again. Note: Some symbols may not be available on Alpha Vantage free tier. You can also try searching by company name instead.'
+        });
       }
 
       // Fetch company overview for additional context
