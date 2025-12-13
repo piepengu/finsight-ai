@@ -1482,16 +1482,19 @@ exports.getStockRecommendation = onRequest(
       const resolvedName = symbolResult.name;
       const hasMultipleMatches = symbolResult.allMatches && symbolResult.allMatches.length > 1;
 
-      // Fetch current price and recent data
-      let quoteData = null;
-      try {
-        const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
-          params: {
-            function: 'GLOBAL_QUOTE',
-            symbol: symbol,
-            apikey: alphaKeyValue
-          }
-        });
+      // Use quote data from searchSymbol if available (avoids redundant API call)
+      let quoteData = symbolResult.quoteData || null;
+
+      // Only fetch quote if we don't already have it from searchSymbol
+      if (!quoteData) {
+        try {
+          const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
+            params: {
+              function: 'GLOBAL_QUOTE',
+              symbol: symbol,
+              apikey: alphaKeyValue
+            }
+          });
 
         // Log the response for debugging
         logger.info('Quote API response', { 
@@ -1556,6 +1559,9 @@ exports.getStockRecommendation = onRequest(
         }
         
         return res.status(500).json({ error: `Could not fetch stock data for ${symbol}: ${error.message}` });
+        }
+      } else {
+        logger.info('Using quote data from searchSymbol (avoided redundant API call)', { symbol, price: quoteData.price });
       }
 
       if (!quoteData) {
