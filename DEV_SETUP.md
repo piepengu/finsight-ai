@@ -29,10 +29,24 @@
    cd ..
    ```
 
-## Running Development Server
+## Recommended workflow: cloud-backed testing
 
-### Option 1: Full Emulator Suite (Recommended)
-This runs hosting, functions, and Firestore emulators:
+The production app at https://finsight-ai-jd.web.app is the supported path for Auth, Firestore, secrets, and Mag7 cache.
+
+1. Edit `public/` or `functions/`
+2. Deploy what you changed:
+   ```bash
+   npm run deploy:hosting
+   npm run deploy:functions
+   ```
+3. Smoke-test on the live URL (Sign-In, Mag7, briefing, Explain, Recommend, portfolio)
+
+Local emulators are optional and incomplete without extra setup (below).
+
+## Running Emulators (optional)
+
+### Option 1: Full Emulator Suite
+Requires **JDK 17+** for the Firestore emulator.
 ```bash
 npm run dev
 ```
@@ -41,58 +55,42 @@ npm run dev
 - Firestore: http://localhost:8080
 - Emulator UI: http://localhost:4000
 
+**Note:** The frontend does **not** call `connectAuthEmulator` / `connectFirestoreEmulator`. Even with emulators running, Auth and Firestore still talk to **production** unless you add that wiring.
+
 ### Option 2: Hosting + Functions Only
 ```bash
 npm run dev:all
 ```
-- Frontend: http://localhost:5000
-- Functions: http://localhost:5001
 
-### Option 3: Hosting Only (Static Files)
+### Option 3: Hosting Only
 ```bash
 npm run dev:hosting
 ```
 - Frontend: http://localhost:5000
-- Note: API calls will fail (no functions running)
+- Without functions emulator, `/api/*` calls will fail locally
 
 ### Option 4: Functions Only
 ```bash
 npm run dev:functions
 ```
-- Functions: http://localhost:5001
-- Useful for testing API endpoints directly
 
-## Development Workflow
+## Environment Variables / Secrets
 
-1. **Start the emulators:**
-   ```bash
-   npm run dev
-   ```
+Production uses Firebase Functions secrets:
+- `ALPHA_KEY` — Alpha Vantage
+- `GEMINI_KEY` — Google Gemini
 
-2. **Open your browser:**
-   - Navigate to http://localhost:5000
-   - The app will automatically use the local functions emulator
-
-3. **Make changes:**
-   - Edit files in `public/` for frontend changes
-   - Edit files in `functions/` for backend changes
-   - Changes are auto-reloaded (for hosting) or require restart (for functions)
-
-4. **View emulator UI:**
-   - Open http://localhost:4000 to see logs, Firestore data, etc.
-
-## Environment Variables
-
-The functions use environment variables for API keys:
-- `ALPHA_KEY` - Alpha Vantage API key
-- `GEMINI_KEY` - Google Gemini API key
-
-These are configured in Firebase Functions config (production) or can be set locally:
 ```bash
-# In functions/.env.local (not tracked in git)
+firebase functions:secrets:set ALPHA_KEY
+firebase functions:secrets:set GEMINI_KEY
+```
+
+For local functions emulator, create gitignored secret files as documented by Firebase (`functions/.secret.local` or params), e.g.:
+```
 ALPHA_KEY=your_key_here
 GEMINI_KEY=your_key_here
 ```
+Do not commit these files.
 
 ## Project Structure
 

@@ -126,8 +126,11 @@ async function loadMagnificent7() {
       });
       
       stocksHTML += '</div>';
-      if (data.cached) {
-        stocksHTML += '<div style="text-align: center; margin-top: 0.5rem; font-size: 0.75rem; color: rgba(255,255,255,0.7);">📦 Showing cached data</div>';
+      if (data.stale || data.cached) {
+        const label = data.stale
+          ? 'Showing recently cached prices (refreshing in background)'
+          : 'Showing cached data';
+        stocksHTML += `<div style="text-align: center; margin-top: 0.5rem; font-size: 0.75rem; color: rgba(255,255,255,0.7);">${label}</div>`;
       } else if (data.partial) {
         stocksHTML += '<div style="text-align: center; margin-top: 0.5rem; font-size: 0.8rem; color: rgba(255,255,255,0.8);">Showing available stocks (some may be rate-limited)</div>';
       }

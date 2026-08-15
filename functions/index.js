@@ -1,4 +1,5 @@
 const { onRequest } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const logger = require('firebase-functions/logger');
 const axios = require('axios');
@@ -262,190 +263,314 @@ Explain what these movements mean in simple terms for beginners. Keep it educati
   }
 });
 
+const MAGNIFICENT_7 = [
+  { symbol: 'AAPL', name: 'Apple' },
+  { symbol: 'MSFT', name: 'Microsoft' },
+  { symbol: 'GOOGL', name: 'Alphabet' },
+  { symbol: 'AMZN', name: 'Amazon' },
+  { symbol: 'NVDA', name: 'Nvidia' },
+  { symbol: 'META', name: 'Meta' },
+  { symbol: 'TSLA', name: 'Tesla' }
+];
+
+const MAG7_CACHE_KEY = 'magnificent7_stocks';
+const MAG7_FRESH_MS = 15 * 60 * 1000; // serve as fresh for 15 minutes
+const MAG7_STALE_OK_MS = 6 * 60 * 60 * 1000; // prefer complete stale up to 6 hours
+const ALPHA_CALL_GAP_MS = 13000; // free tier ~5 calls/minute
+
+function isAlphaVantageRateLimit(data) {
+  const msg = data?.Note || data?.['Error Message'] || data?.Information;
+  if (!msg) return false;
+  const lower = String(msg).toLowerCase();
+  // "Thank you for using Alpha Vantage" Informational messages are NOT rate limits
+  return (
+    lower.includes('rate limit') ||
+    lower.includes('calls per minute') ||
+    lower.includes('api call frequency') ||
+    lower.includes('thank you for using alpha vantage! our standard api call frequency')
+  );
+}
+
+function mag7CachePayload(cachedData, extras = {}) {
+  const stocks = cachedData.stocks || [];
+  return {
+    stocks,
+    timestamp: cachedData.timestamp?.toDate
+      ? cachedData.timestamp.toDate().toISOString()
+      : cachedData.timestamp || new Date().toISOString(),
+    partial: stocks.length < MAGNIFICENT_7.length,
+    cached: true,
+    ...extras
+  };
+}
+
+async function fetchMag7Quote(symbol, name, alphaKeyValue) {
+  const response = await axios.get('https://www.alphavantage.co/query', {
+    params: {
+      function: 'GLOBAL_QUOTE',
+      symbol,
+      apikey: alphaKeyValue
+    },
+    timeout: 10000
+  });
+
+  if (isAlphaVantageRateLimit(response.data)) {
+    const err = new Error('RATE_LIMIT');
+    err.rateLimited = true;
+    err.details = response.data.Note || response.data.Information;
+    throw err;
+  }
+
+  const quote = response.data['Global Quote'];
+  if (!quote || !quote['05. price']) {
+    return null;
+  }
+
+  return {
+    symbol,
+    name,
+    price: parseFloat(quote['05. price']),
+    change: parseFloat(quote['09. change']),
+    changePercent: parseFloat(String(quote['10. change percent']).replace('%', '')),
+    high: parseFloat(quote['03. high']),
+    low: parseFloat(quote['04. low'])
+  };
+}
+
+/**
+ * Refresh Mag7 quotes with pacing. Merges into existing stocks and never
+ * downgrades a more-complete cache with a worse partial set.
+ */
+async function refreshMagnificent7Cache(alphaKeyValue, options = {}) {
+  const { maxFetches = 7, preferMissing = true } = options;
+  const cacheRef = db.collection('cache').doc(MAG7_CACHE_KEY);
+  const cacheDoc = await cacheRef.get();
+  const previous = cacheDoc.exists ? (cacheDoc.data().stocks || []) : [];
+  const bySymbol = new Map(previous.map((s) => [s.symbol, s]));
+
+  let symbolsToFetch = MAGNIFICENT_7.map((s) => s.symbol);
+  if (preferMissing) {
+    const missing = symbolsToFetch.filter((sym) => !bySymbol.has(sym));
+    const present = symbolsToFetch.filter((sym) => bySymbol.has(sym));
+    symbolsToFetch = [...missing, ...present];
+  }
+  symbolsToFetch = symbolsToFetch.slice(0, maxFetches);
+
+  let rateLimited = false;
+  let fetchedCount = 0;
+
+  for (let i = 0; i < symbolsToFetch.length; i++) {
+    const symbol = symbolsToFetch[i];
+    const meta = MAGNIFICENT_7.find((s) => s.symbol === symbol);
+
+    try {
+      const quote = await fetchMag7Quote(symbol, meta.name, alphaKeyValue);
+      if (quote) {
+        bySymbol.set(symbol, quote);
+        fetchedCount += 1;
+        logger.info(`Mag7 fetched ${symbol}`, { price: quote.price });
+      } else {
+        logger.warn(`Mag7 no quote for ${symbol}`);
+      }
+    } catch (error) {
+      if (error.rateLimited) {
+        rateLimited = true;
+        logger.warn(`Mag7 rate limited at ${symbol}`, { details: error.details });
+        break;
+      }
+      logger.error(`Mag7 error fetching ${symbol}`, { error: error.message });
+    }
+
+    if (i < symbolsToFetch.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, ALPHA_CALL_GAP_MS));
+    }
+  }
+
+  const merged = MAGNIFICENT_7
+    .map((meta) => bySymbol.get(meta.symbol))
+    .filter(Boolean);
+
+  const previousCount = previous.length;
+  const shouldWrite =
+    merged.length > previousCount ||
+    (merged.length === MAGNIFICENT_7.length && fetchedCount > 0) ||
+    (previousCount === 0 && merged.length > 0);
+
+  if (shouldWrite && merged.length > 0) {
+    await cacheRef.set({
+      stocks: merged,
+      partial: merged.length < MAGNIFICENT_7.length,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+    logger.info('Cached Magnificent 7 data', {
+      count: merged.length,
+      previousCount,
+      fetchedCount,
+      rateLimited
+    });
+  } else if (previousCount > 0 && merged.length < previousCount) {
+    logger.info('Keeping previous Mag7 cache (more complete than refresh)', {
+      previousCount,
+      mergedCount: merged.length
+    });
+  }
+
+  const finalDoc = await cacheRef.get();
+  const finalData = finalDoc.exists ? finalDoc.data() : { stocks: merged, timestamp: { toDate: () => new Date() } };
+  return {
+    stocks: finalData.stocks || merged,
+    partial: (finalData.stocks || merged).length < MAGNIFICENT_7.length,
+    rateLimited,
+    fetchedCount
+  };
+}
+
 // Magnificent 7 stocks: AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA
 exports.getMagnificent7 = onRequest(
-  { 
-    region: 'us-east4', 
+  {
+    region: 'us-east4',
     cors: true,
     secrets: [alphaKey],
-    timeoutSeconds: 70  // Fetch first 5 stocks (~60 seconds max)
-  }, 
+    timeoutSeconds: 120
+  },
   async (req, res) => {
     logger.info('getMagnificent7 invoked');
-    
+
     try {
-      // Check cache first (5 minute cache)
-      const cacheKey = 'magnificent7_stocks';
-      const cacheRef = db.collection('cache').doc(cacheKey);
+      const cacheRef = db.collection('cache').doc(MAG7_CACHE_KEY);
       const cacheDoc = await cacheRef.get();
-      
+
       if (cacheDoc.exists) {
         const cachedData = cacheDoc.data();
+        const stocks = cachedData.stocks || [];
         const cacheAge = Date.now() - cachedData.timestamp.toMillis();
-        const fiveMinutes = 5 * 60 * 1000;
-        
-        if (cacheAge < fiveMinutes) {
-          logger.info('Returning cached Magnificent 7 data', { age: Math.round(cacheAge / 1000) + 's', count: cachedData.stocks?.length || 0 });
-          return res.json({
-            stocks: cachedData.stocks || [],
-            timestamp: cachedData.timestamp.toDate().toISOString(),
-            partial: cachedData.partial || false,
-            cached: true
+
+        if (cacheAge < MAG7_FRESH_MS && stocks.length > 0) {
+          logger.info('Returning fresh Mag7 cache', {
+            ageSec: Math.round(cacheAge / 1000),
+            count: stocks.length
           });
+          return res.json(mag7CachePayload(cachedData));
+        }
+
+        // Prefer a complete (or better) stale set over a slow partial live fetch
+        if (
+          stocks.length === MAGNIFICENT_7.length &&
+          cacheAge < MAG7_STALE_OK_MS
+        ) {
+          logger.info('Returning complete stale Mag7 cache', {
+            ageMin: Math.round(cacheAge / 60000),
+            count: stocks.length
+          });
+          return res.json(mag7CachePayload(cachedData, { stale: true }));
         }
       }
 
       const alphaKeyValue = alphaKey.value();
-    
+
       if (!alphaKeyValue) {
-        // If no API key but we have cached data, return it even if stale
-        if (cacheDoc.exists) {
-          const cachedData = cacheDoc.data();
-          logger.warn('No API key, returning stale cache');
-          return res.json({
-            stocks: cachedData.stocks || [],
-            timestamp: cachedData.timestamp.toDate().toISOString(),
-            partial: cachedData.partial || false,
-            cached: true
-          });
+        if (cacheDoc.exists && (cacheDoc.data().stocks || []).length > 0) {
+          logger.warn('No API key, returning stale Mag7 cache');
+          return res.json(mag7CachePayload(cacheDoc.data(), { stale: true }));
         }
         logger.error('Missing Alpha Vantage API key');
-        return res.status(500).json({ error: 'API key not configured. Please set ALPHA_KEY environment variable.' });
+        return res.status(500).json({
+          error: 'API key not configured. Please set ALPHA_KEY environment variable.'
+        });
       }
 
-      const magnificent7 = [
-        { symbol: 'AAPL', name: 'Apple' },
-        { symbol: 'MSFT', name: 'Microsoft' },
-        { symbol: 'GOOGL', name: 'Alphabet' },
-        { symbol: 'AMZN', name: 'Amazon' },
-        { symbol: 'NVDA', name: 'Nvidia' },
-        { symbol: 'META', name: 'Meta' },
-        { symbol: 'TSLA', name: 'Tesla' }
-      ];
+      // Fill missing symbols first (up to 5 calls / ~65s) to improve completeness
+      const previousCount = cacheDoc.exists ? (cacheDoc.data().stocks || []).length : 0;
+      const missingCount = MAGNIFICENT_7.length - previousCount;
+      const maxFetches = missingCount > 0 ? Math.min(5, Math.max(missingCount, 2)) : 3;
 
-      // Alpha Vantage free tier: 5 API calls per minute
-      // Fetch stocks with optimized delays - return after first 5 to avoid timeout
-      const stocks = [];
-      const delayBetweenCalls = 12000; // 12 seconds between calls (5 calls per minute)
-      const maxInitialFetch = 5; // Fetch first 5 stocks, return quickly
-    
-    // Fetch first batch quickly to avoid timeout
-    for (let i = 0; i < Math.min(magnificent7.length, maxInitialFetch); i++) {
-      const stock = magnificent7[i];
-      
+      const refreshed = await refreshMagnificent7Cache(alphaKeyValue, {
+        maxFetches,
+        preferMissing: true
+      });
+
+      if (refreshed.stocks.length === 0) {
+        return res.status(503).json({
+          error: 'Rate limit exceeded. Please try again in a minute.',
+          stocks: [],
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return res.json({
+        stocks: refreshed.stocks,
+        timestamp: new Date().toISOString(),
+        partial: refreshed.partial,
+        cached: false,
+        rateLimited: refreshed.rateLimited || undefined
+      });
+    } catch (error) {
+      logger.error('getMagnificent7 error', { error: error.message, stack: error.stack });
+
       try {
-        const response = await axios.get('https://www.alphavantage.co/query', {
-          params: {
-            function: 'GLOBAL_QUOTE',
-            symbol: stock.symbol,
-            apikey: alphaKeyValue
-          },
-          timeout: 10000 // 10 second timeout per request
-        });
-
-        // Check for rate limit error
-        if (response.data['Note'] || response.data['Information']) {
-          logger.warn(`Rate limit hit for ${stock.symbol}`, { data: response.data });
-          // If rate limited, return what we have so far
-          break;
+        const fallback = await db.collection('cache').doc(MAG7_CACHE_KEY).get();
+        if (fallback.exists && (fallback.data().stocks || []).length > 0) {
+          return res.json(mag7CachePayload(fallback.data(), { stale: true, error: true }));
         }
-
-        if (response.data['Global Quote'] && response.data['Global Quote']['05. price']) {
-          const quote = response.data['Global Quote'];
-          stocks.push({
-            symbol: stock.symbol,
-            name: stock.name,
-            price: parseFloat(quote['05. price']),
-            change: parseFloat(quote['09. change']),
-            changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
-            high: parseFloat(quote['03. high']),
-            low: parseFloat(quote['04. low'])
-          });
-          logger.info(`Successfully fetched ${stock.symbol}`, { price: quote['05. price'] });
-        } else {
-          logger.warn(`No price data for ${stock.symbol}`, { data: response.data });
-        }
-      } catch (error) {
-        logger.error(`Error fetching ${stock.symbol}`, { 
-          error: error.message,
-          response: error.response?.data 
-        });
-        // Continue to next stock instead of failing completely
+      } catch (_) {
+        // ignore fallback errors
       }
 
-      // Wait before next call (except after the last one in this batch)
-      if (i < Math.min(magnificent7.length, maxInitialFetch) - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayBetweenCalls));
-      }
-    }
-
-    const validStocks = stocks;
-    const fetchedSymbols = validStocks.map(s => s.symbol);
-    const missingSymbols = magnificent7
-      .map(s => s.symbol)
-      .filter(s => !fetchedSymbols.includes(s));
-
-    logger.info('Magnificent 7 data fetched', { 
-      count: validStocks.length,
-      fetched: fetchedSymbols,
-      missing: missingSymbols
-    });
-
-    // Return whatever stocks we got, even if partial
-    // This allows the frontend to show available data even if rate-limited
-    if (validStocks.length === 0) {
-      logger.warn('No stocks fetched - likely rate limited, trying stale cache');
-      // If we have cached data, return it even if stale
-      if (cacheDoc.exists) {
-        const cachedData = cacheDoc.data();
-        logger.info('Returning stale cache due to rate limit');
-        return res.json({
-          stocks: cachedData.stocks || [],
-          timestamp: cachedData.timestamp.toDate().toISOString(),
-          partial: cachedData.partial || false,
-          cached: true,
-          rateLimited: true
-        });
-      }
-      return res.status(503).json({ 
-        error: 'Rate limit exceeded. Please try again in a minute.',
-        stocks: [],
-        timestamp: new Date().toISOString()
+      res.status(500).json({
+        error: 'Failed to fetch Magnificent 7 data',
+        message: error.message
       });
     }
-
-    // Cache the results
-    const responseData = {
-      stocks: validStocks,
-      timestamp: new Date().toISOString(),
-      partial: validStocks.length < magnificent7.length // Indicate if this is partial data
-    };
-
-    await cacheRef.set({
-      stocks: validStocks,
-      partial: responseData.partial,
-      timestamp: admin.firestore.FieldValue.serverTimestamp()
-    });
-    logger.info('Cached Magnificent 7 data', { count: validStocks.length });
-
-    res.json(responseData);
-
-  } catch (error) {
-    logger.error('getMagnificent7 error', { error: error.message, stack: error.stack });
-    res.status(500).json({ error: 'Failed to fetch Magnificent 7 data', message: error.message });
   }
-});
+);
 
+// Pre-warm Mag7 cache so the banner is rarely cold (Blaze + Cloud Scheduler)
+exports.refreshMagnificent7CacheJob = onSchedule(
+  {
+    schedule: 'every 20 minutes',
+    region: 'us-east4',
+    secrets: [alphaKey],
+    timeoutSeconds: 300,
+    retryCount: 0
+  },
+  async () => {
+    const alphaKeyValue = alphaKey.value();
+    if (!alphaKeyValue) {
+      logger.error('Mag7 schedule: ALPHA_KEY missing');
+      return;
+    }
+    logger.info('Mag7 scheduled refresh starting');
+    await refreshMagnificent7Cache(alphaKeyValue, {
+      maxFetches: 7,
+      preferMissing: true
+    });
+    logger.info('Mag7 scheduled refresh finished');
+  }
+);
 // Helper function to verify authentication
 async function verifyAuth(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('Unauthorized: No token provided');
+    const err = new Error('Unauthorized: No token provided');
+    err.statusCode = 401;
+    throw err;
   }
   
   const token = authHeader.split('Bearer ')[1];
-  const decodedToken = await admin.auth().verifyIdToken(token);
-  return decodedToken.uid;
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    return decodedToken.uid;
+  } catch (e) {
+    const err = new Error('Unauthorized: Invalid or expired token');
+    err.statusCode = 401;
+    throw err;
+  }
+}
+
+function handleHttpError(res, error, logLabel) {
+  const status = error.statusCode || (String(error.message || '').startsWith('Unauthorized') ? 401 : 500);
+  logger.error(logLabel, { error: error.message, stack: error.stack, status });
+  res.status(status).json({ error: error.message });
 }
 
 // Helper function to get stock price with caching (5 minute cache)
@@ -846,8 +971,7 @@ exports.buyStock = onRequest(
       });
 
     } catch (error) {
-      logger.error('buyStock error', { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message });
+      handleHttpError(res, error, 'buyStock error');
     }
   }
 );
@@ -937,8 +1061,7 @@ exports.sellStock = onRequest(
       });
 
     } catch (error) {
-      logger.error('sellStock error', { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message });
+      handleHttpError(res, error, 'sellStock error');
     }
   }
 );
@@ -1068,8 +1191,7 @@ exports.getPortfolioHistory = onRequest(
       });
       
     } catch (error) {
-      logger.error('getPortfolioHistory error', { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message });
+      handleHttpError(res, error, 'getPortfolioHistory error');
     }
   }
 );
@@ -1111,8 +1233,7 @@ exports.addToWatchlist = onRequest(
       res.json({ success: true, message: `${stockSymbol} added to watchlist` });
 
     } catch (error) {
-      logger.error('addToWatchlist error', { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message });
+      handleHttpError(res, error, 'addToWatchlist error');
     }
   }
 );
@@ -1146,8 +1267,7 @@ exports.removeFromWatchlist = onRequest(
       res.json({ success: true, message: `${stockSymbol} removed from watchlist` });
 
     } catch (error) {
-      logger.error('removeFromWatchlist error', { error: error.message, stack: error.stack });
-      res.status(500).json({ error: error.message });
+      handleHttpError(res, error, 'removeFromWatchlist error');
     }
   }
 );

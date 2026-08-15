@@ -9,6 +9,7 @@
     ]
   },
   "hosting": {
+    "site": "finsight-ai-jd",
     "public": "public",
     "ignore": [
       "firebase.json",

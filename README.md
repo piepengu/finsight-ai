@@ -1,72 +1,69 @@
 # FinSight AI
 
-Daily AI-powered market briefing for young investors.
+Daily AI-powered market briefing and virtual portfolio simulator for young investors.
+
+**Live:** https://finsight-ai-jd.web.app
+
+## Features
+
+- Daily market briefing (S&P 500 via SPY, Bitcoin, Ethereum) with Gemini AI summary
+- Magnificent 7 price banner (cached + scheduled refresh)
+- Virtual portfolio simulator (Google Sign-In, buy/sell, P&L, Chart.js history)
+- Watchlist
+- Explain It — beginner-friendly company summaries
+- AI stock recommendations (educational only)
 
 ## Quick Start
 
 ### Prerequisites
+
 - Node.js v20+
-- Firebase CLI (`npm install -g firebase-tools`)
-- Firebase account (login with `firebase login`)
+- Firebase CLI (`npm install -g firebase-tools` or use local `npx firebase`)
+- Firebase login (`firebase login`) linked to project `finsight-ai-jd`
+- API secrets already set in production: `ALPHA_KEY`, `GEMINI_KEY`
 
 ### Installation
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   cd functions && npm install && cd ..
-   ```
+```bash
+npm install
+cd functions && npm install && cd ..
+```
 
-3. Start development server:
-   ```bash
-   npm run dev
-   ```
+### Development
 
-4. Open your browser:
-   - Frontend: http://localhost:5000
-   - Emulator UI: http://localhost:4000
+**Recommended (matches production Auth/Firestore/secrets):** use deployed Cloud Functions and Hosting, or deploy hosting locally while calling cloud APIs.
 
-## Available Scripts
+```bash
+# Static hosting only (API calls hit production rewrites when deployed;
+# locally, prefer testing against https://finsight-ai-jd.web.app)
+npm run dev:hosting
+```
 
-- `npm run dev` - Start all Firebase emulators (hosting + functions + Firestore)
-- `npm run dev:all` - Start hosting + functions emulators
-- `npm run dev:hosting` - Start only hosting emulator
-- `npm run dev:functions` - Start only functions emulator
-- `npm run deploy` - Deploy to Firebase
-- `npm run deploy:hosting` - Deploy only hosting
-- `npm run deploy:functions` - Deploy only functions
+Full emulators (`npm run dev`) need JDK 17+ for Firestore and local secret wiring in `functions/.env` / `.secret.local`. The frontend does not connect to Auth/Firestore emulators by default — see [DEV_SETUP.md](./DEV_SETUP.md).
+
+### Deploy
+
+```bash
+npm run deploy
+# or
+npm run deploy:hosting
+npm run deploy:functions
+```
 
 ## Project Structure
 
 ```
 finsight-ai/
 ├── public/              # Frontend (HTML, CSS, JS)
-│   ├── index.html
-│   ├── app.js
-│   └── styles.css
-├── functions/           # Backend (Firebase Functions)
-│   ├── index.js
-│   └── package.json
-├── firebase.json        # Firebase configuration
-└── package.json         # Root package.json with dev scripts
+├── functions/           # Cloud Functions (Node 20)
+├── firebase.json
+└── package.json
 ```
 
-## Features
+## Security notes
 
-- 📊 Real-time S&P 500 (SPY) data from Alpha Vantage
-- ₿ Bitcoin and Ethereum prices from CoinGecko
-- 🤖 AI-powered market summaries using Google Gemini
-- 🎨 Modern, responsive UI
-
-## Development
-
-For detailed development setup instructions, see [DEV_SETUP.md](./DEV_SETUP.md).
-
-## Deployment
-
-The app is deployed to Firebase Hosting:
-- Production: https://finsight-ai-jd.web.app
+- Vendor API keys live in Firebase Functions secrets — never in the client.
+- The Firebase web `apiKey` is public by design; restrict it with HTTP referrers in Google Cloud Console (see [SECURITY_FIX.md](./SECURITY_FIX.md)).
 
 ## License
 

@@ -189,6 +189,42 @@
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+    .edu-disclaimer {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-left: 4px solid #f59e0b;
+      color: #92400e;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      margin: 1rem 0 1.5rem;
+    }
+    .site-footer {
+      margin-top: 2rem;
+      padding-top: 1rem;
+      border-top: 1px solid #e5e7eb;
+      font-size: 0.85rem;
+      color: #6b7280;
+      line-height: 1.5;
+    }
+    .feature-form-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1rem;
+      align-items: end;
+    }
+    @media (max-width: 640px) {
+      body { padding: 1rem; }
+      .container { padding: 1.25rem; }
+      .feature-form-grid {
+        grid-template-columns: 1fr;
+      }
+      .magnificent7-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      #auth-section { text-align: left; }
+    }
   </style>
 </head>
 <body>
@@ -204,6 +240,10 @@
     
     <h1>📊 FinSight AI</h1>
     <p>Your daily AI-powered market briefing for young investors</p>
+    <p class="edu-disclaimer" role="note">
+      <strong>Educational only — not financial advice.</strong>
+      FinSight AI is a learning tool. Market data and AI summaries can be delayed, incomplete, or wrong. Do your own research before investing real money.
+    </p>
     
     <div id="magnificent7-banner" class="magnificent7-banner">
       <h2>🌟 Top Tech Stocks</h2>
@@ -353,12 +393,12 @@
       <p style="color: #6b7280; margin-bottom: 1rem;">Learn what any company does in simple terms</p>
       
       <div style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
-        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: end;">
+        <div class="feature-form-grid">
           <div>
             <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol or Company Name</label>
             <input type="text" id="explain-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
           </div>
-          <button id="explain-btn" style="padding: 0.75rem 1.5rem; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Explain</button>
+          <button id="explain-btn" style="padding: 0.75rem 1.5rem; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; margin-bottom: 0; width: 100%;">Explain</button>
         </div>
         <div id="explain-message" style="margin-top: 1rem;"></div>
       </div>
@@ -375,13 +415,16 @@
       <h2>💡 Stock Recommendation</h2>
       <p style="color: #6b7280; margin-bottom: 1rem;">Get AI-powered buy/hold/sell recommendations</p>
       
+      <p class="edu-disclaimer" role="note" style="margin-top: 0;">
+        Recommendations are AI-generated for learning and are <strong>not</strong> personalized investment advice.
+      </p>
       <div style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
-        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: end;">
+        <div class="feature-form-grid">
           <div>
             <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol or Company Name</label>
             <input type="text" id="recommendation-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
           </div>
-          <button id="recommendation-btn" style="padding: 0.75rem 1.5rem; background: #059669; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Get Recommendation</button>
+          <button id="recommendation-btn" style="padding: 0.75rem 1.5rem; background: #059669; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; margin-bottom: 0; width: 100%;">Get Recommendation</button>
         </div>
         <div id="recommendation-message" style="margin-top: 1rem;"></div>
       </div>
@@ -433,6 +476,11 @@
     <div id="output">
       <div class="loading">Click the button above to load today's market briefing...</div>
     </div>
+
+    <footer class="site-footer">
+      FinSight AI is an educational demo. Prices may be cached or delayed. Virtual portfolio balances are simulated and have no real-world value.
+      Restrict your Firebase web API key in Google Cloud Console (HTTP referrers for this site + localhost) — see <code>SECURITY_FIX.md</code>.
+    </footer>
   </div>
   
   <!-- Firebase SDK -->

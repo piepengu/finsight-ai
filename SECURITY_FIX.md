@@ -1,7 +1,16 @@
 # Security Fix: Firebase API Key Restrictions
 
 ## Status
-✅ **Firebase API keys are MEANT to be public** - this is normal and expected for Firebase web apps. However, we should add restrictions to limit usage.
+Firebase web API keys are **meant to be public**, but you should still restrict them.
+
+**Apply restrictions** (pick one):
+1. Run after `gcloud auth login`:
+   ```powershell
+   ./scripts/restrict-firebase-web-key.ps1
+   ```
+2. Or follow the manual Console steps below / in [scripts/RESTRICT_API_KEY.md](./scripts/RESTRICT_API_KEY.md)
+
+**Action required** until applied: anyone can reuse the client key from `public/index.html` against your Firebase project (still subject to Auth/Firestore rules).
 
 ## What to Do
 

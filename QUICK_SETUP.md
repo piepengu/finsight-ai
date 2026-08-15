@@ -1,80 +1,38 @@
-# 🚀 Quick Setup - Portfolio Feature
+# Quick Setup
 
-## What You Need to Do (5 minutes)
+Project `finsight-ai-jd` is already configured. Use this checklist only for a new machine or new collaborator.
 
-### Step 1: Get Firebase Config (2 minutes)
+## 1. Install
 
-1. **Open this link in your browser:**
-   https://console.firebase.google.com/project/finsight-ai-jd/settings/general
+```bash
+npm install
+cd functions && npm install && cd ..
+npx firebase login
+npx firebase use finsight-ai-jd
+```
 
-2. **Scroll down** to find **"Your apps"** section
+## 2. Confirm Google Sign-In
 
-3. **Click the Web icon** (`</>`) - it looks like this: `</>`
+1. Open https://console.firebase.google.com/project/finsight-ai-jd/authentication/providers
+2. Ensure **Google** provider is enabled
+3. Authorized domains include `finsight-ai-jd.web.app` and `localhost`
 
-4. **Fill in the form:**
-   - App nickname: `FinSight AI Web`
-   - ✅ Check "Also set up Firebase Hosting" (optional)
-   - Click **Register app**
+## 3. Secrets (production)
 
-5. **Copy the config** - You'll see something like this:
-   ```javascript
-   const firebaseConfig = {
-     apiKey: "AIzaSy...",
-     authDomain: "finsight-ai-jd.firebaseapp.com",
-     projectId: "finsight-ai-jd",
-     storageBucket: "finsight-ai-jd.appspot.com",
-     messagingSenderId: "99481735828",
-     appId: "1:99481735828:web:abc123..."
-   };
-   ```
+Already set in this project. To rotate:
 
-6. **Send me these 2 values:**
-   - `apiKey` (starts with "AIzaSy...")
-   - `appId` (starts with "1:99481735828:web:...")
+```bash
+firebase functions:secrets:set ALPHA_KEY
+firebase functions:secrets:set GEMINI_KEY
+firebase deploy --only functions
+```
 
-   **OR** copy the entire config and I'll update it for you!
+## 4. Restrict web API key
 
-### Step 2: Enable Google Sign-In (1 minute)
+Follow [SECURITY_FIX.md](./SECURITY_FIX.md) (HTTP referrers for Hosting + localhost).
 
-1. **Open this link:**
-   https://console.firebase.google.com/project/finsight-ai-jd/authentication
+## 5. Verify
 
-2. Click **Get Started** (if you see it)
+Open https://finsight-ai-jd.web.app — Mag7 banner, briefing, Explain, Recommend, and Sign-In → portfolio should work.
 
-3. Click **Sign-in method** tab
-
-4. Click **Google**
-
-5. **Toggle it ON** (Enable)
-
-6. Set:
-   - Project support email: (your email)
-   - Project public-facing name: `FinSight AI`
-
-7. Click **Save**
-
-### Step 3: I'll Update the Code
-
-Once you give me the `apiKey` and `appId`, I'll:
-- ✅ Update `public/index.html` with your config
-- ✅ Deploy the updated code
-- ✅ Test it for you
-
-## That's It! 🎉
-
-After I update the code, you'll be able to:
-- Sign in with Google
-- See your $10,000 starting balance
-- Buy and sell stocks
-- Track your portfolio in real-time
-
----
-
-## Need Help?
-
-Just tell me:
-1. The `apiKey` value
-2. The `appId` value
-
-And I'll handle the rest! 🚀
-
+For day-to-day coding, prefer deploy-and-test against production (see [DEV_SETUP.md](./DEV_SETUP.md)). Emulators need JDK 17+ and do not wire Auth/Firestore on the frontend by default.
