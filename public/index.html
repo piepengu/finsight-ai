@@ -200,6 +200,35 @@
       line-height: 1.45;
       margin: 1rem 0 1.5rem;
     }
+    .signin-prompt {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid #2563eb;
+      border-radius: 8px;
+      padding: 1.25rem 1.35rem;
+      margin: 0 0 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .signin-prompt h2 {
+      margin: 0 0 0.35rem;
+      font-size: 1.1rem;
+      color: #1e3a8a;
+    }
+    .signin-prompt p {
+      margin: 0;
+      color: #1e40af;
+      font-size: 0.95rem;
+      line-height: 1.45;
+      max-width: 36rem;
+    }
+    .signin-prompt button {
+      margin: 0;
+      white-space: nowrap;
+    }
     .site-footer {
       margin-top: 2rem;
       padding-top: 1rem;
@@ -248,6 +277,15 @@
     <div id="magnificent7-banner" class="magnificent7-banner">
       <h2>🌟 Top Tech Stocks</h2>
       <div id="magnificent7-content" class="magnificent7-loading">Loading stock prices...</div>
+    </div>
+
+    <!-- Shown when signed out -->
+    <div id="signin-prompt" class="signin-prompt" role="status">
+      <div>
+        <h2>Sign in to unlock all features</h2>
+        <p>Create a free account to use your virtual portfolio, trade practice stocks, track P&amp;L, and save a personal watchlist.</p>
+      </div>
+      <button type="button" id="signin-prompt-btn">Sign in with Google</button>
     </div>
 
     <!-- Portfolio Section (shown when logged in) -->

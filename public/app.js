@@ -602,6 +602,7 @@ function initAuth() {
     const userInfo = document.getElementById('user-info');
     const userName = document.getElementById('user-name');
     const portfolioSection = document.getElementById('portfolio-section');
+    const signinPrompt = document.getElementById('signin-prompt');
 
     if (user) {
       // User is signed in
@@ -609,6 +610,7 @@ function initAuth() {
       userInfo.style.display = 'block';
       userName.textContent = user.displayName || user.email;
       portfolioSection.style.display = 'block';
+      if (signinPrompt) signinPrompt.style.display = 'none';
       setupPortfolioListeners(user.uid);
       setupWatchlistListener(user.uid);
     } else {
@@ -617,6 +619,7 @@ function initAuth() {
       userInfo.style.display = 'none';
       portfolioSection.style.display = 'none';
       document.getElementById('watchlist-section').style.display = 'none';
+      if (signinPrompt) signinPrompt.style.display = 'flex';
     }
   });
 }
@@ -1019,6 +1022,10 @@ window.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     initAuth();
     document.getElementById('login-btn').addEventListener('click', signInWithGoogle);
+    const signinPromptBtn = document.getElementById('signin-prompt-btn');
+    if (signinPromptBtn) {
+      signinPromptBtn.addEventListener('click', signInWithGoogle);
+    }
     document.getElementById('logout-btn').addEventListener('click', signOutUser);
     document.getElementById('buy-btn').addEventListener('click', buyStock);
     document.getElementById('sell-btn').addEventListener('click', sellStock);
