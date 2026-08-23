@@ -4,356 +4,61 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FinSight AI - Daily Market Briefing & Portfolio</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=bg-stamp-1" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <style>
-    * { box-sizing: border-box; }
-    body { 
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; 
-      margin: 0;
-      padding: 2rem;
-      background: #f5f5f5;
-      color: #333;
-    }
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-      background: white;
-      padding: 2rem;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    h1 { 
-      margin-top: 0;
-      color: #2563eb;
-    }
-    button { 
-      padding: 0.75rem 1.5rem; 
-      border: none;
-      border-radius: 6px; 
-      cursor: pointer;
-      background: #2563eb;
-      color: white;
-      font-size: 1rem;
-      font-weight: 600;
-      margin-bottom: 2rem;
-      transition: background 0.2s;
-    }
-    button:hover { background: #1d4ed8; }
-    button:disabled { 
-      background: #9ca3af; 
-      cursor: not-allowed; 
-    }
-    .loading { 
-      text-align: center; 
-      padding: 2rem;
-      color: #6b7280;
-    }
-    .error {
-      background: #fee2e2;
-      color: #991b1b;
-      padding: 1rem;
-      border-radius: 6px;
-      margin: 1rem 0;
-    }
-    .briefing {
-      margin-top: 2rem;
-    }
-    .date {
-      color: #6b7280;
-      font-size: 0.9rem;
-      margin-bottom: 1.5rem;
-    }
-    .markets {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
-    }
-    .market-card {
-      background: #f9fafb;
-      padding: 1.5rem;
-      border-radius: 8px;
-      border-left: 4px solid #2563eb;
-    }
-    .market-card h3 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1rem;
-      color: #374151;
-    }
-    .price {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #111827;
-      margin: 0.5rem 0;
-    }
-    .change {
-      font-size: 0.9rem;
-      font-weight: 600;
-    }
-    .change.positive { color: #059669; }
-    .change.negative { color: #dc2626; }
-    .summary {
-      background: #eff6ff;
-      padding: 1.5rem;
-      border-radius: 8px;
-      border-left: 4px solid #3b82f6;
-      line-height: 1.6;
-      color: #1e40af;
-    }
-    .summary h2 {
-      margin-top: 0;
-      color: #1e40af;
-      font-size: 1.2rem;
-    }
-    .magnificent7-banner {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 1.5rem;
-      border-radius: 12px;
-      margin-bottom: 2rem;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    }
-    .magnificent7-banner h2 {
-      margin: 0 0 1rem 0;
-      color: white;
-      font-size: 1.1rem;
-      font-weight: 600;
-    }
-    .magnificent7-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 1rem;
-    }
-    .magnificent7-item {
-      background: rgba(255, 255, 255, 0.95);
-      padding: 0.75rem;
-      border-radius: 8px;
-      text-align: center;
-    }
-    .magnificent7-item .symbol {
-      font-weight: 700;
-      font-size: 0.9rem;
-      color: #1f2937;
-      margin-bottom: 0.25rem;
-    }
-    .magnificent7-item .name {
-      font-size: 0.75rem;
-      color: #6b7280;
-      margin-bottom: 0.5rem;
-    }
-    .magnificent7-item .price {
-      font-size: 1rem;
-      font-weight: 700;
-      color: #111827;
-      margin-bottom: 0.25rem;
-    }
-    .magnificent7-item .change {
-      font-size: 0.8rem;
-      font-weight: 600;
-    }
-    .magnificent7-item .change.positive { color: #059669; }
-    .magnificent7-item .change.negative { color: #dc2626; }
-    .magnificent7-loading {
-      color: rgba(255, 255, 255, 0.9);
-      text-align: center;
-      padding: 1rem;
-      font-size: 0.9rem;
-    }
-    @keyframes slideIn {
-      from {
-        opacity: 0;
-        transform: translateY(-10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-    @keyframes pulse {
-      0%, 100% {
-        opacity: 1;
-      }
-      50% {
-        opacity: 0.5;
-      }
-    }
-    .loading-spinner {
-      display: inline-block;
-      width: 20px;
-      height: 20px;
-      border: 3px solid rgba(255, 255, 255, 0.3);
-      border-radius: 50%;
-      border-top-color: white;
-      animation: spin 1s ease-in-out infinite;
-    }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    .edu-disclaimer {
-      background: #fffbeb;
-      border: 1px solid #fcd34d;
-      border-left: 4px solid #f59e0b;
-      color: #92400e;
-      padding: 0.85rem 1rem;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      line-height: 1.45;
-      margin: 1rem 0 1.5rem;
-    }
-    .signin-prompt {
-      background: #eff6ff;
-      border: 1px solid #bfdbfe;
-      border-left: 4px solid #2563eb;
-      border-radius: 8px;
-      padding: 1.25rem 1.35rem;
-      margin: 0 0 2rem;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-    }
-    .signin-prompt h2 {
-      margin: 0 0 0.35rem;
-      font-size: 1.1rem;
-      color: #1e3a8a;
-    }
-    .signin-prompt p {
-      margin: 0;
-      color: #1e40af;
-      font-size: 0.95rem;
-      line-height: 1.45;
-      max-width: 36rem;
-    }
-    .signin-prompt button {
-      margin: 0;
-      white-space: nowrap;
-    }
-    .learning-tips {
-      margin: 0 0 2rem;
-      padding: 1.25rem 1.35rem;
-      background: #f0fdf4;
-      border: 1px solid #bbf7d0;
-      border-left: 4px solid #059669;
-      border-radius: 8px;
-    }
-    .learning-tips-header {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 0.75rem;
-      margin-bottom: 0.75rem;
-    }
-    .learning-tips-header h2 {
-      margin: 0;
-      font-size: 1.1rem;
-      color: #065f46;
-    }
-    .learning-tips-meta {
-      font-size: 0.8rem;
-      color: #047857;
-    }
-    .learning-tip-title {
-      margin: 0 0 0.4rem;
-      font-size: 1rem;
-      font-weight: 700;
-      color: #064e3b;
-    }
-    .learning-tip-body {
-      margin: 0 0 1rem;
-      color: #065f46;
-      font-size: 0.95rem;
-      line-height: 1.55;
-    }
-    .learning-tips-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-    }
-    .learning-tips-actions button {
-      margin: 0;
-      padding: 0.5rem 1rem;
-      font-size: 0.9rem;
-      background: #059669;
-    }
-    .learning-tips-actions button.secondary {
-      background: #fff;
-      color: #065f46;
-      border: 1px solid #86efac;
-    }
-    .learning-tips-actions button.secondary:hover {
-      background: #ecfdf5;
-    }
-    .inline-tip {
-      margin: 0.75rem 0 0;
-      padding: 0.75rem 0.9rem;
-      background: #ecfdf5;
-      border-radius: 6px;
-      font-size: 0.88rem;
-      color: #065f46;
-      line-height: 1.45;
-    }
-    .site-footer {
-      margin-top: 2rem;
-      padding-top: 1rem;
-      border-top: 1px solid #e5e7eb;
-      font-size: 0.85rem;
-      color: #6b7280;
-      line-height: 1.5;
-    }
-    .feature-form-grid {
-      display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 1rem;
-      align-items: end;
-    }
-    @media (max-width: 640px) {
-      body { padding: 1rem; }
-      .container { padding: 1.25rem; }
-      .feature-form-grid {
-        grid-template-columns: 1fr;
-      }
-      .magnificent7-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-      #auth-section { text-align: left; }
-    }
-  </style>
 </head>
 <body>
   <div class="container">
-    <!-- Auth Section - Top Right -->
-    <div id="auth-section" style="margin-bottom: 1rem; text-align: right; padding: 0.5rem 0;">
-      <button id="login-btn" style="display: block; padding: 0.75rem 1.5rem; border: none; border-radius: 6px; cursor: pointer; background: #2563eb; color: white; font-size: 1rem; font-weight: 600; transition: background 0.2s;">Sign in with Google</button>
-      <div id="user-info" style="display: none;">
-        <span id="user-name" style="margin-right: 1rem; font-weight: 600;"></span>
-        <button id="logout-btn" style="padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; background: #6b7280; color: white; font-size: 0.9rem;">Sign Out</button>
+    <div class="topbar">
+      <div id="auth-section">
+        <button type="button" id="login-btn">Sign in with Google</button>
+        <div id="user-info">
+          <span id="user-name"></span>
+          <button type="button" id="logout-btn" class="btn-ghost">Sign Out</button>
+        </div>
       </div>
     </div>
-    
-    <h1>📊 FinSight AI</h1>
-    <p>Your daily AI-powered market briefing for young investors</p>
+
+    <header class="brand-hero">
+      <div class="brand-mark" aria-hidden="true">
+        <div class="brand-mark-bars"><span></span><span></span><span></span></div>
+      </div>
+      <h1>FinSight AI</h1>
+      <p class="tagline">Your daily market briefing for young investors — learn, practice, and grow confidence.</p>
+    </header>
+
     <p class="edu-disclaimer" role="note">
       <strong>Educational only — not financial advice.</strong>
-      FinSight AI is a learning tool. Market data and AI summaries can be delayed, incomplete, or wrong. Do your own research before investing real money.
+      Market data and AI summaries can be delayed, incomplete, or wrong. Do your own research before investing real money.
     </p>
-    
+
     <div id="magnificent7-banner" class="magnificent7-banner">
-      <h2>🌟 Top Tech Stocks</h2>
+      <h2>Top tech stocks</h2>
       <div id="magnificent7-content" class="magnificent7-loading">Loading stock prices...</div>
     </div>
 
-    <!-- Shown when signed out -->
+    <section id="briefing-section" class="briefing-section" aria-labelledby="briefing-heading">
+      <div class="briefing-header">
+        <div>
+          <h2 id="briefing-heading">Today's market briefing</h2>
+          <p class="briefing-subtitle">S&amp;P 500, crypto, and a plain-English AI summary — loads automatically</p>
+        </div>
+        <button type="button" id="fetch-btn" class="btn-refresh">Refresh</button>
+      </div>
+      <div id="output">
+        <div class="loading"><span class="loading-pulse" aria-hidden="true"></span>Loading today's market briefing...</div>
+      </div>
+    </section>
+
     <div id="signin-prompt" class="signin-prompt" role="status">
       <div>
         <h2>Sign in to unlock all features</h2>
-        <p>Create a free account to use your virtual portfolio, trade practice stocks, track P&amp;L, and save a personal watchlist.</p>
+        <p>Use a free account for your virtual portfolio, practice trades, P&amp;L tracking, and a personal watchlist.</p>
       </div>
       <button type="button" id="signin-prompt-btn">Sign in with Google</button>
     </div>
 
-    <section id="learning-tips" class="learning-tips" aria-labelledby="learning-tips-heading">
+    <section id="learning-tips" class="learning-tips section" aria-labelledby="learning-tips-heading">
       <div class="learning-tips-header">
         <h2 id="learning-tips-heading">Learning tip</h2>
         <span id="learning-tip-meta" class="learning-tips-meta"></span>
@@ -366,97 +71,90 @@
       </div>
     </section>
 
-    <!-- Portfolio Section (shown when logged in) -->
-    <div id="portfolio-section" style="display: none; margin-bottom: 2rem;">
-      <h2>💼 My Portfolio</h2>
-      
-      <!-- Account Balance -->
-      <div class="portfolio-summary" style="background: #f0f9ff; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-          <div>
-            <div style="font-size: 0.9rem; color: #6b7280; margin-bottom: 0.5rem;">Cash Balance</div>
-            <div id="cash-balance" style="font-size: 1.5rem; font-weight: 700; color: #111827;">$10,000.00</div>
-          </div>
-          <div>
-            <div style="font-size: 0.9rem; color: #6b7280; margin-bottom: 0.5rem;">Portfolio Value</div>
-            <div id="portfolio-value" style="font-size: 1.5rem; font-weight: 700; color: #111827;">$10,000.00</div>
-          </div>
-          <div>
-            <div style="font-size: 0.9rem; color: #6b7280; margin-bottom: 0.5rem;">Total P&L</div>
-            <div id="total-pl" style="font-size: 1.5rem; font-weight: 700; color: #059669;">$0.00</div>
-          </div>
+    <div id="portfolio-section" class="section" style="display: none;">
+      <h2 class="section-title">My portfolio</h2>
+      <p class="section-lead">Practice with virtual cash — no real money involved.</p>
+
+      <div class="portfolio-summary">
+        <div>
+          <div class="stat-label">Cash balance</div>
+          <div id="cash-balance" class="stat-value">$10,000.00</div>
+        </div>
+        <div>
+          <div class="stat-label">Portfolio value</div>
+          <div id="portfolio-value" class="stat-value">$10,000.00</div>
+        </div>
+        <div>
+          <div class="stat-label">Total P&amp;L</div>
+          <div id="total-pl" class="stat-value" style="color: var(--good);">$0.00</div>
         </div>
       </div>
 
-      <!-- Buy/Sell Form -->
-      <div class="trading-form" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
-        <h3 style="margin-top: 0;">Trade Stocks</h3>
-        <div style="display: grid; grid-template-columns: 2fr 2fr 1fr 1fr; gap: 1rem; align-items: end;">
+      <div class="trading-form">
+        <h3>Trade stocks</h3>
+        <div class="trade-grid">
           <div>
-            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol</label>
-            <input type="text" id="stock-symbol" placeholder="e.g., AAPL" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+            <label for="stock-symbol">Stock symbol</label>
+            <input type="text" id="stock-symbol" placeholder="e.g., AAPL" />
           </div>
           <div>
-            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Quantity</label>
-            <input type="number" id="stock-quantity" placeholder="1" min="1" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+            <label for="stock-quantity">Quantity</label>
+            <input type="number" id="stock-quantity" placeholder="1" min="1" />
           </div>
-          <button id="buy-btn" style="padding: 0.75rem 1.5rem; background: #059669; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Buy</button>
-          <button id="sell-btn" style="padding: 0.75rem 1.5rem; background: #dc2626; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Sell</button>
+          <button type="button" id="buy-btn" class="btn-buy">Buy</button>
+          <button type="button" id="sell-btn" class="btn-sell">Sell</button>
         </div>
         <div id="trading-message" style="margin-top: 1rem;"></div>
-        <p class="inline-tip"><strong>Tip:</strong> This is practice money only. Buying means you spend cash for shares; selling turns shares back into cash. Your P&amp;L shows whether those shares are worth more or less than you paid.</p>
+        <p class="inline-tip"><strong>Tip:</strong> This is practice money only. Buying spends cash for shares; selling turns shares back into cash. P&amp;L shows whether those shares are worth more or less than you paid.</p>
       </div>
 
-      <!-- Holdings Table -->
-      <div class="holdings-section" style="margin-bottom: 2rem;">
+      <div class="holdings-section" style="margin-bottom: 1.5rem;">
         <h3>Holdings</h3>
         <div id="holdings-table" style="overflow-x: auto;">
-          <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
+          <table class="data-table">
             <thead>
-              <tr style="background: #f9fafb;">
-                <th style="padding: 1rem; text-align: left; font-weight: 600;">Symbol</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Shares</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Avg Price</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Current Price</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Value</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">P&L</th>
+              <tr>
+                <th>Symbol</th>
+                <th style="text-align: right;">Shares</th>
+                <th style="text-align: right;">Avg price</th>
+                <th style="text-align: right;">Current</th>
+                <th style="text-align: right;">Value</th>
+                <th style="text-align: right;">P&amp;L</th>
               </tr>
             </thead>
             <tbody id="holdings-tbody">
               <tr>
-                <td colspan="6" style="padding: 2rem; text-align: center; color: #6b7280;">No holdings yet. Start trading!</td>
+                <td colspan="6" style="text-align: center; color: var(--muted);">No holdings yet. Start trading!</td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- Portfolio Performance Chart -->
-      <div id="portfolio-chart-section" class="chart-section" style="margin-bottom: 2rem;">
-        <h3>Portfolio Performance</h3>
-        <div style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); height: 400px; position: relative;">
+      <div id="portfolio-chart-section" class="chart-section" style="margin-bottom: 1.5rem;">
+        <h3>Portfolio performance</h3>
+        <div class="chart-frame">
           <canvas id="portfolio-chart"></canvas>
         </div>
       </div>
 
-      <!-- Transaction History -->
       <div class="transaction-history-section">
-        <h3>Transaction History</h3>
+        <h3>Transaction history</h3>
         <div id="transaction-history" style="overflow-x: auto; max-height: 400px; overflow-y: auto;">
-          <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
-            <thead style="position: sticky; top: 0; background: #f9fafb; z-index: 10;">
+          <table class="data-table">
+            <thead style="position: sticky; top: 0; z-index: 10;">
               <tr>
-                <th style="padding: 1rem; text-align: left; font-weight: 600;">Date</th>
-                <th style="padding: 1rem; text-align: left; font-weight: 600;">Type</th>
-                <th style="padding: 1rem; text-align: left; font-weight: 600;">Symbol</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Shares</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Price</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Total</th>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Symbol</th>
+                <th style="text-align: right;">Shares</th>
+                <th style="text-align: right;">Price</th>
+                <th style="text-align: right;">Total</th>
               </tr>
             </thead>
             <tbody id="transaction-tbody">
               <tr>
-                <td colspan="6" style="padding: 2rem; text-align: center; color: #6b7280;">No transactions yet.</td>
+                <td colspan="6" style="text-align: center; color: var(--muted);">No transactions yet.</td>
               </tr>
             </tbody>
           </table>
@@ -464,39 +162,37 @@
       </div>
     </div>
 
-    <!-- Watchlist Section (shown when logged in) -->
-    <div id="watchlist-section" style="display: none; margin-bottom: 2rem;">
-      <h2>⭐ My Watchlist</h2>
-      
-      <!-- Add to Watchlist Form -->
-      <div class="watchlist-form" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
-        <h3 style="margin-top: 0;">Add Stock to Watchlist</h3>
-        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: end;">
+    <div id="watchlist-section" class="section" style="display: none;">
+      <h2 class="section-title">My watchlist</h2>
+      <p class="section-lead">Track stocks you are curious about before you practice a trade.</p>
+
+      <div class="watchlist-form">
+        <h3>Add stock</h3>
+        <div class="feature-form-grid">
           <div>
-            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol</label>
-            <input type="text" id="watchlist-symbol" placeholder="e.g., TSLA" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+            <label for="watchlist-symbol">Stock symbol</label>
+            <input type="text" id="watchlist-symbol" placeholder="e.g., TSLA" />
           </div>
-          <button id="add-watchlist-btn" style="padding: 0.75rem 1.5rem; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Add</button>
+          <button type="button" id="add-watchlist-btn">Add</button>
         </div>
         <div id="watchlist-message" style="margin-top: 1rem;"></div>
       </div>
 
-      <!-- Watchlist Table -->
-      <div class="watchlist-section">
-        <h3>Watched Stocks</h3>
+      <div class="watchlist-list">
+        <h3>Watched stocks</h3>
         <div id="watchlist-table" style="overflow-x: auto;">
-          <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
+          <table class="data-table">
             <thead>
-              <tr style="background: #f9fafb;">
-                <th style="padding: 1rem; text-align: left; font-weight: 600;">Symbol</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Current Price</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600;">Change</th>
-                <th style="padding: 1rem; text-align: center; font-weight: 600;">Actions</th>
+              <tr>
+                <th>Symbol</th>
+                <th style="text-align: right;">Current price</th>
+                <th style="text-align: right;">Change</th>
+                <th style="text-align: center;">Actions</th>
               </tr>
             </thead>
             <tbody id="watchlist-tbody">
               <tr>
-                <td colspan="4" style="padding: 2rem; text-align: center; color: #6b7280;">No stocks in watchlist. Add some stocks to track!</td>
+                <td colspan="4" style="text-align: center; color: var(--muted);">No stocks in watchlist yet.</td>
               </tr>
             </tbody>
           </table>
@@ -504,110 +200,97 @@
       </div>
     </div>
 
-    <!-- Explain It Feature -->
-    <div id="explain-section" style="margin-bottom: 2rem;">
-      <h2>🔍 Explain It</h2>
-      <p style="color: #6b7280; margin-bottom: 1rem;">Learn what any company does in simple terms</p>
-      
-      <div style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
+    <div id="explain-section" class="section">
+      <h2 class="section-title">Explain It</h2>
+      <p class="section-lead">Learn what any company does in simple terms.</p>
+
+      <div class="feature-panel">
         <div class="feature-form-grid">
           <div>
-            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol or Company Name</label>
-            <input type="text" id="explain-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+            <label for="explain-symbol">Stock symbol or company name</label>
+            <input type="text" id="explain-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" />
           </div>
-          <button id="explain-btn" style="padding: 0.75rem 1.5rem; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; margin-bottom: 0; width: 100%;">Explain</button>
+          <button type="button" id="explain-btn">Explain</button>
         </div>
         <div id="explain-message" style="margin-top: 1rem;"></div>
       </div>
 
-      <div id="explain-result" style="display: none; background: #eff6ff; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #3b82f6; margin-bottom: 1.5rem;">
-        <h3 id="explain-company-name" style="margin-top: 0; color: #1e40af;"></h3>
-        <div id="explain-content" style="line-height: 1.6; color: #1e40af; margin-bottom: 1rem;"></div>
-        <div id="explain-price-info" style="font-size: 0.9rem; color: #6b7280;"></div>
+      <div id="explain-result" class="explain-result">
+        <h3 id="explain-company-name"></h3>
+        <div id="explain-content" style="line-height: 1.65; margin-bottom: 0.85rem;"></div>
+        <div id="explain-price-info" style="font-size: 0.9rem; color: var(--muted);"></div>
       </div>
     </div>
 
-    <!-- Stock Recommendation Feature -->
-    <div id="recommendation-section" style="margin-bottom: 2rem;">
-      <h2>💡 Stock Recommendation</h2>
-      <p style="color: #6b7280; margin-bottom: 1rem;">Get AI-powered buy/hold/sell recommendations</p>
-      
+    <div id="recommendation-section" class="section">
+      <h2 class="section-title">Stock recommendation</h2>
+      <p class="section-lead">AI-generated buy / hold / sell ideas for learning — not personal advice.</p>
+
       <p class="edu-disclaimer" role="note" style="margin-top: 0;">
-        Recommendations are AI-generated for learning and are <strong>not</strong> personalized investment advice.
+        Recommendations are for education only and are <strong>not</strong> personalized investment advice.
       </p>
-      <div style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
+
+      <div class="feature-panel">
         <div class="feature-form-grid">
           <div>
-            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Stock Symbol or Company Name</label>
-            <input type="text" id="recommendation-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem;" />
+            <label for="recommendation-symbol">Stock symbol or company name</label>
+            <input type="text" id="recommendation-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" />
           </div>
-          <button id="recommendation-btn" style="padding: 0.75rem 1.5rem; background: #059669; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; margin-bottom: 0; width: 100%;">Get Recommendation</button>
+          <button type="button" id="recommendation-btn" class="btn-buy">Get recommendation</button>
         </div>
         <div id="recommendation-message" style="margin-top: 1rem;"></div>
       </div>
 
-      <div id="recommendation-result" style="display: none; background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 1.5rem;">
-        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid #e5e7eb;">
+      <div id="recommendation-result" class="recommendation-result">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); gap: 1rem; flex-wrap: wrap;">
           <div>
-            <h3 id="recommendation-company-name" style="margin: 0 0 0.5rem 0; color: #111827;"></h3>
-            <div id="recommendation-price" style="font-size: 1.2rem; font-weight: 600; color: #111827;"></div>
+            <h3 id="recommendation-company-name" style="margin: 0 0 0.4rem; font-family: var(--font-display);"></h3>
+            <div id="recommendation-price" style="font-size: 1.15rem; font-weight: 600;"></div>
           </div>
-          <div id="recommendation-badge" style="padding: 0.5rem 1rem; border-radius: 6px; font-weight: 700; font-size: 1.1rem;"></div>
+          <div id="recommendation-badge" style="padding: 0.45rem 0.9rem; border-radius: 8px; font-weight: 700;"></div>
         </div>
-        
-        <div style="margin-bottom: 1.5rem;">
-          <div style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
-            <div style="flex: 1; min-width: 150px;">
-              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 0.25rem;">Confidence</div>
-              <div id="recommendation-confidence" style="font-weight: 600; color: #111827;"></div>
-            </div>
-            <div style="flex: 1; min-width: 150px;">
-              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 0.25rem;">Risk Level</div>
-              <div id="recommendation-risk" style="font-weight: 600; color: #111827;"></div>
-            </div>
-            <div style="flex: 1; min-width: 150px;">
-              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 0.25rem;">Time Horizon</div>
-              <div id="recommendation-horizon" style="font-weight: 600; color: #111827;"></div>
-            </div>
+
+        <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 140px;">
+            <div class="stat-label">Confidence</div>
+            <div id="recommendation-confidence" style="font-weight: 600;"></div>
+          </div>
+          <div style="flex: 1; min-width: 140px;">
+            <div class="stat-label">Risk level</div>
+            <div id="recommendation-risk" style="font-weight: 600;"></div>
+          </div>
+          <div style="flex: 1; min-width: 140px;">
+            <div class="stat-label">Time horizon</div>
+            <div id="recommendation-horizon" style="font-weight: 600;"></div>
           </div>
         </div>
 
-        <div style="margin-bottom: 1.5rem;">
-          <h4 style="margin: 0 0 0.75rem 0; color: #374151; font-size: 1rem;">Reasoning</h4>
-          <div id="recommendation-reasoning" style="line-height: 1.6; color: #4b5563; background: #f9fafb; padding: 1rem; border-radius: 6px;"></div>
+        <div style="margin-bottom: 1.15rem;">
+          <h4 style="margin: 0 0 0.55rem; font-size: 0.95rem;">Reasoning</h4>
+          <div id="recommendation-reasoning" style="line-height: 1.6; color: var(--ink-soft); background: #f3faf9; padding: 0.9rem 1rem; border-radius: 10px;"></div>
         </div>
 
-        <div style="margin-bottom: 1.5rem;">
-          <h4 style="margin: 0 0 0.75rem 0; color: #374151; font-size: 1rem;">Key Points</h4>
-          <ul id="recommendation-keypoints" style="margin: 0; padding-left: 1.5rem; color: #4b5563; line-height: 1.8;"></ul>
+        <div style="margin-bottom: 1.15rem;">
+          <h4 style="margin: 0 0 0.55rem; font-size: 0.95rem;">Key points</h4>
+          <ul id="recommendation-keypoints" style="margin: 0; padding-left: 1.25rem; color: var(--ink-soft); line-height: 1.75;"></ul>
         </div>
 
-        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 6px; font-size: 0.9rem; color: #92400e;">
-          <strong>⚠️ Disclaimer:</strong> <span id="recommendation-disclaimer"></span>
+        <div class="edu-disclaimer" style="margin: 0;">
+          <strong>Disclaimer:</strong> <span id="recommendation-disclaimer"></span>
         </div>
       </div>
     </div>
 
-    <button id="fetch-btn">Get Today's Briefing</button>
-    
-    <div id="output">
-      <div class="loading">Click the button above to load today's market briefing...</div>
-    </div>
-
     <footer class="site-footer">
       FinSight AI is an educational demo. Prices may be cached or delayed. Virtual portfolio balances are simulated and have no real-world value.
-      Restrict your Firebase web API key in Google Cloud Console (HTTP referrers for this site + localhost) — see <code>SECURITY_FIX.md</code>.
     </footer>
   </div>
-  
-  <!-- Firebase SDK -->
+
   <script type="module">
-    // Import Firebase modules
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
     import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
     import { getFirestore, doc, getDoc, setDoc, collection, onSnapshot, query, where, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
-    // Firebase configuration
     const firebaseConfig = {
       apiKey: "AIzaSyBN3LaYDWfhW9M2URxQXs6OZEvvjzIImnE",
       authDomain: "finsight-ai-jd.firebaseapp.com",
@@ -618,13 +301,11 @@
       measurementId: "G-W0MFFNX3MJ"
     };
 
-    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
     const googleProvider = new GoogleAuthProvider();
 
-    // Make auth, db, and functions available globally
     window.firebaseAuth = auth;
     window.firebaseDb = db;
     window.googleProvider = googleProvider;
@@ -634,6 +315,3 @@
   <script src="/app.js"></script>
 </body>
 </html>
-
-
-

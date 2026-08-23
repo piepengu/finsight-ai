@@ -2,9 +2,11 @@ async function fetchBriefing() {
   const btn = document.getElementById('fetch-btn');
   const output = document.getElementById('output');
   
-  btn.disabled = true;
-  btn.textContent = 'Loading...';
-  output.innerHTML = '<div class="loading">Fetching market data and generating AI summary...</div>';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+  }
+  output.innerHTML = '<div class="loading"><span class="loading-pulse" aria-hidden="true"></span>Loading today\'s market briefing...</div>';
 
   try {
     const res = await fetch('/api/briefing');
@@ -13,7 +15,6 @@ async function fetchBriefing() {
     }
     const data = await res.json();
 
-    // Format market data for display
     let marketsHTML = '';
     
     if (data.markets?.sp500) {
@@ -27,8 +28,8 @@ async function fetchBriefing() {
             ${sp.changePercent >= 0 ? '+' : ''}${sp.changePercent.toFixed(2)}%
             (${sp.change >= 0 ? '+' : ''}$${sp.change.toFixed(2)})
           </div>
-          <div style="font-size: 0.85rem; color: #6b7280; margin-top: 0.5rem;">
-            High: $${sp.high.toFixed(2)} | Low: $${sp.low.toFixed(2)}
+          <div class="market-meta">
+            High $${sp.high.toFixed(2)} · Low $${sp.low.toFixed(2)}
           </div>
         </div>
       `;
@@ -40,11 +41,11 @@ async function fetchBriefing() {
       if (crypto.btc) {
         const btcChangeClass = crypto.btc.change24h >= 0 ? 'positive' : 'negative';
         marketsHTML += `
-          <div class="market-card">
+          <div class="market-card crypto-btc">
             <h3>Bitcoin (BTC)</h3>
             <div class="price">$${crypto.btc.price.toLocaleString()}</div>
             <div class="change ${btcChangeClass}">
-              ${crypto.btc.change24h >= 0 ? '+' : ''}${crypto.btc.change24h.toFixed(2)}%
+              ${crypto.btc.change24h >= 0 ? '+' : ''}${crypto.btc.change24h.toFixed(2)}% <span style="font-weight:500;color:var(--muted)">24h</span>
             </div>
           </div>
         `;
@@ -53,24 +54,23 @@ async function fetchBriefing() {
       if (crypto.eth) {
         const ethChangeClass = crypto.eth.change24h >= 0 ? 'positive' : 'negative';
         marketsHTML += `
-          <div class="market-card">
+          <div class="market-card crypto-eth">
             <h3>Ethereum (ETH)</h3>
             <div class="price">$${crypto.eth.price.toLocaleString()}</div>
             <div class="change ${ethChangeClass}">
-              ${crypto.eth.change24h >= 0 ? '+' : ''}${crypto.eth.change24h.toFixed(2)}%
+              ${crypto.eth.change24h >= 0 ? '+' : ''}${crypto.eth.change24h.toFixed(2)}% <span style="font-weight:500;color:var(--muted)">24h</span>
             </div>
           </div>
         `;
       }
     }
 
-    // Build final HTML
     output.innerHTML = `
       <div class="briefing">
-        <div class="date">📅 ${data.date || 'Today'}</div>
+        <div class="briefing-date">${data.date || 'Today'}</div>
         ${marketsHTML ? `<div class="markets">${marketsHTML}</div>` : ''}
         <div class="summary">
-          <h2>🤖 AI Summary</h2>
+          <h2>AI summary</h2>
           <p>${data.summary || 'Summary unavailable'}</p>
         </div>
       </div>
@@ -84,8 +84,10 @@ async function fetchBriefing() {
       </div>
     `;
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Get Today\'s Briefing';
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Refresh';
+    }
   }
 }
 
@@ -130,9 +132,9 @@ async function loadMagnificent7() {
         const label = data.stale
           ? 'Showing recently cached prices (refreshing in background)'
           : 'Showing cached data';
-        stocksHTML += `<div style="text-align: center; margin-top: 0.5rem; font-size: 0.75rem; color: rgba(255,255,255,0.7);">${label}</div>`;
+        stocksHTML += `<div class="magnificent7-note">${label}</div>`;
       } else if (data.partial) {
-        stocksHTML += '<div style="text-align: center; margin-top: 0.5rem; font-size: 0.8rem; color: rgba(255,255,255,0.8);">Showing available stocks (some may be rate-limited)</div>';
+        stocksHTML += '<div class="magnificent7-note">Showing available stocks (some may be rate-limited)</div>';
       }
       bannerContent.innerHTML = stocksHTML;
     } else {
@@ -1093,8 +1095,9 @@ window.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', fetchBriefing);
   }
   
-  // Load Magnificent 7 banner on page load
+  // Auto-load Mag7, briefing (server-cached), and learning tips
   loadMagnificent7();
+  fetchBriefing();
   initLearningTips();
 
   // Setup auth
