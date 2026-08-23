@@ -229,6 +229,71 @@
       margin: 0;
       white-space: nowrap;
     }
+    .learning-tips {
+      margin: 0 0 2rem;
+      padding: 1.25rem 1.35rem;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-left: 4px solid #059669;
+      border-radius: 8px;
+    }
+    .learning-tips-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .learning-tips-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+      color: #065f46;
+    }
+    .learning-tips-meta {
+      font-size: 0.8rem;
+      color: #047857;
+    }
+    .learning-tip-title {
+      margin: 0 0 0.4rem;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #064e3b;
+    }
+    .learning-tip-body {
+      margin: 0 0 1rem;
+      color: #065f46;
+      font-size: 0.95rem;
+      line-height: 1.55;
+    }
+    .learning-tips-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .learning-tips-actions button {
+      margin: 0;
+      padding: 0.5rem 1rem;
+      font-size: 0.9rem;
+      background: #059669;
+    }
+    .learning-tips-actions button.secondary {
+      background: #fff;
+      color: #065f46;
+      border: 1px solid #86efac;
+    }
+    .learning-tips-actions button.secondary:hover {
+      background: #ecfdf5;
+    }
+    .inline-tip {
+      margin: 0.75rem 0 0;
+      padding: 0.75rem 0.9rem;
+      background: #ecfdf5;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      color: #065f46;
+      line-height: 1.45;
+    }
     .site-footer {
       margin-top: 2rem;
       padding-top: 1rem;
@@ -288,6 +353,19 @@
       <button type="button" id="signin-prompt-btn">Sign in with Google</button>
     </div>
 
+    <section id="learning-tips" class="learning-tips" aria-labelledby="learning-tips-heading">
+      <div class="learning-tips-header">
+        <h2 id="learning-tips-heading">Learning tip</h2>
+        <span id="learning-tip-meta" class="learning-tips-meta"></span>
+      </div>
+      <h3 id="learning-tip-title" class="learning-tip-title"></h3>
+      <p id="learning-tip-body" class="learning-tip-body"></p>
+      <div class="learning-tips-actions">
+        <button type="button" id="learning-tip-next">Next tip</button>
+        <button type="button" id="learning-tip-prev" class="secondary">Previous</button>
+      </div>
+    </section>
+
     <!-- Portfolio Section (shown when logged in) -->
     <div id="portfolio-section" style="display: none; margin-bottom: 2rem;">
       <h2>💼 My Portfolio</h2>
@@ -326,6 +404,7 @@
           <button id="sell-btn" style="padding: 0.75rem 1.5rem; background: #dc2626; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Sell</button>
         </div>
         <div id="trading-message" style="margin-top: 1rem;"></div>
+        <p class="inline-tip"><strong>Tip:</strong> This is practice money only. Buying means you spend cash for shares; selling turns shares back into cash. Your P&amp;L shows whether those shares are worth more or less than you paid.</p>
       </div>
 
       <!-- Holdings Table -->

@@ -147,6 +147,84 @@ async function loadMagnificent7() {
   }
 }
 
+const LEARNING_TIPS = [
+  {
+    title: 'What is a stock?',
+    body: 'A stock is a tiny slice of ownership in a company. If the company does well over time, that slice can become more valuable — but prices also go down, so you can lose money too.'
+  },
+  {
+    title: 'What does the green/red % mean?',
+    body: 'The percentage shows how much a price moved today versus yesterday’s close. Green usually means up; red means down. One day of movement does not tell the whole story — investors often look at weeks and years.'
+  },
+  {
+    title: 'What is P&L?',
+    body: 'P&L means profit and loss. In your practice portfolio, it compares what you paid for shares with what they are worth now. Positive P&L means you are “up” on paper; negative means you are “down.”'
+  },
+  {
+    title: 'Why do prices move?',
+    body: 'Prices change when more people want to buy than sell (price tends to rise), or the opposite (price tends to fall). News, earnings, the economy, and investor mood all play a role.'
+  },
+  {
+    title: 'What is the S&P 500?',
+    body: 'The S&P 500 tracks about 500 large U.S. companies. FinSight uses the SPY ETF as a simple stand-in so you can see how “the overall market” is doing in one number.'
+  },
+  {
+    title: 'Cash vs portfolio value',
+    body: 'Cash is money you have not invested yet. Portfolio value is cash plus the current value of your holdings. Together they show your total practice account.'
+  },
+  {
+    title: 'Diversification (keep it simple)',
+    body: 'Putting all practice money into one stock is riskier than spreading it across a few companies or an ETF. If one idea fails, the others can help cushion the hit.'
+  },
+  {
+    title: 'Long-term vs short-term',
+    body: 'Day-to-day swings are normal. Many long-term investors focus on years, not hours. FinSight’s practice trades are for learning — not for chasing every tiny price move.'
+  },
+  {
+    title: 'What is a watchlist?',
+    body: 'A watchlist is a list of stocks you want to follow without buying yet. Use it to learn how prices change before you practice a trade.'
+  },
+  {
+    title: 'AI tips are for learning',
+    body: 'Explain It and recommendations use AI to teach concepts. They are not personal advice and can be wrong. Always read the disclaimer and think for yourself.'
+  }
+];
+
+let learningTipIndex = 0;
+
+function renderLearningTip(index) {
+  const tip = LEARNING_TIPS[index];
+  if (!tip) return;
+  const titleEl = document.getElementById('learning-tip-title');
+  const bodyEl = document.getElementById('learning-tip-body');
+  const metaEl = document.getElementById('learning-tip-meta');
+  if (!titleEl || !bodyEl || !metaEl) return;
+  titleEl.textContent = tip.title;
+  bodyEl.textContent = tip.body;
+  metaEl.textContent = `Tip ${index + 1} of ${LEARNING_TIPS.length}`;
+}
+
+function showNextLearningTip() {
+  learningTipIndex = (learningTipIndex + 1) % LEARNING_TIPS.length;
+  renderLearningTip(learningTipIndex);
+}
+
+function showPrevLearningTip() {
+  learningTipIndex = (learningTipIndex - 1 + LEARNING_TIPS.length) % LEARNING_TIPS.length;
+  renderLearningTip(learningTipIndex);
+}
+
+function initLearningTips() {
+  // Start on a tip that rotates by day so returning visitors see variety
+  const daySeed = Math.floor(Date.now() / 86400000);
+  learningTipIndex = daySeed % LEARNING_TIPS.length;
+  renderLearningTip(learningTipIndex);
+  const nextBtn = document.getElementById('learning-tip-next');
+  const prevBtn = document.getElementById('learning-tip-prev');
+  if (nextBtn) nextBtn.addEventListener('click', showNextLearningTip);
+  if (prevBtn) prevBtn.addEventListener('click', showPrevLearningTip);
+}
+
 // Authentication functions
 async function signInWithGoogle() {
   try {
@@ -1017,6 +1095,7 @@ window.addEventListener('DOMContentLoaded', () => {
   
   // Load Magnificent 7 banner on page load
   loadMagnificent7();
+  initLearningTips();
 
   // Setup auth
   setTimeout(() => {
