@@ -1,70 +1,66 @@
 # FinSight AI
 
-Daily AI-powered market briefing and virtual portfolio simulator for young investors.
+Daily AI market briefing and **virtual portfolio simulator** for young investors — learn markets with Gemini summaries, practice trades, and plain-English stock explainers.
 
-**Live:** https://finsight-ai-jd.web.app
+**Live demo:** https://finsight-ai-jd.web.app
+
+## Overview
+
+FinSight is a Firebase full-stack app: a static frontend talks to Cloud Functions that pull market data, cache Magnificent 7 quotes, and call Gemini for briefings, explanations, and educational recommendations. Auth + Firestore power a paper-trading portfolio and watchlist.
+
+## Architecture
+
+```
+Browser (public/)  ──►  Firebase Hosting
+                         │
+                         ├── Cloud Functions (us-east4)
+                         │     market APIs · Gemini · Mag7 cache job
+                         └── Auth + Firestore (portfolio / watchlist)
+```
+
+## Tech stack
+
+| Layer | Tools |
+|-------|--------|
+| Frontend | HTML / CSS / JS, Chart.js, Firebase Auth client |
+| Backend | Node 20 Cloud Functions, Firebase Admin |
+| AI / data | Google Gemini, Alpha Vantage (and related quote sources) |
+| Infra | Firebase Hosting, Firestore, scheduled Mag7 cache refresh |
 
 ## Features
 
-- Daily market briefing (S&P 500 via SPY, Bitcoin, Ethereum) with Gemini AI summary
-- Magnificent 7 price banner (cached + scheduled refresh)
-- Virtual portfolio simulator (Google Sign-In, buy/sell, P&L, Chart.js history)
-- Watchlist
-- Explain It — beginner-friendly company summaries
-- AI stock recommendations (educational only)
+- Auto-loading daily briefing (S&P 500 / SPY, BTC, ETH + AI summary)
+- Magnificent 7 banner with stale-full cache + scheduled refresh
+- Virtual portfolio (Google Sign-In, buy/sell, P&L, history chart)
+- Watchlist, Explain It, educational stock recommendations
+- Beginner learning tips and educational disclaimers throughout
 
-## Quick Start
-
-### Prerequisites
-
-- Node.js v20+
-- Firebase CLI (`npm install -g firebase-tools` or use local `npx firebase`)
-- Firebase login (`firebase login`) linked to project `finsight-ai-jd`
-- API secrets already set in production: `ALPHA_KEY`, `GEMINI_KEY`
-
-### Installation
+## Quickstart
 
 ```bash
+git clone https://github.com/piepengu/finsight-ai.git
+cd finsight-ai
 npm install
 cd functions && npm install && cd ..
+cp functions/.env.example functions/.env   # local secrets only if using emulators
 ```
 
-### Development
+**Prerequisites:** Node 20+, Firebase CLI, access to project `finsight-ai-jd`.
 
-**Recommended (matches production Auth/Firestore/secrets):** use deployed Cloud Functions and Hosting, or deploy hosting locally while calling cloud APIs.
-
-```bash
-# Static hosting only (API calls hit production rewrites when deployed;
-# locally, prefer testing against https://finsight-ai-jd.web.app)
-npm run dev:hosting
-```
-
-Full emulators (`npm run dev`) need JDK 17+ for Firestore and local secret wiring in `functions/.env` / `.secret.local`. The frontend does not connect to Auth/Firestore emulators by default — see [DEV_SETUP.md](./DEV_SETUP.md).
-
-### Deploy
+Production secrets (`ALPHA_KEY`, `GEMINI_KEY`) live in **Firebase Functions secrets** — not in the client. See [DEV_SETUP.md](./DEV_SETUP.md).
 
 ```bash
-npm run deploy
-# or
+# Prefer testing against the live site, or deploy hosting only:
 npm run deploy:hosting
-npm run deploy:functions
+# Full stack:
+npm run deploy
 ```
 
-## Project Structure
+## Security
 
-```
-finsight-ai/
-├── public/              # Frontend (HTML, CSS, JS)
-├── functions/           # Cloud Functions (Node 20)
-├── firebase.json
-└── package.json
-```
-
-## Security notes
-
-- Vendor API keys live in Firebase Functions secrets — never in the client.
-- The Firebase web `apiKey` is public by design; restrict it with HTTP referrers in Google Cloud Console (see [SECURITY_FIX.md](./SECURITY_FIX.md)).
+- Vendor API keys stay in Functions secrets / `.env` (gitignored)
+- The Firebase web `apiKey` is public by design; restrict HTTP referrers in GCP (see [SECURITY_FIX.md](./SECURITY_FIX.md))
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).
