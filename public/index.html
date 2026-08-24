@@ -4,7 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FinSight AI - Daily Market Briefing & Portfolio</title>
-  <link rel="stylesheet" href="/styles.css?v=bg-stamp-1" />
+  <meta name="description" content="Today's market in plain English — AI briefings and a virtual portfolio for young investors." />
+  <meta property="og:title" content="FinSight AI — Today's market briefing" />
+  <meta property="og:description" content="Plain-English market briefing for young investors. Educational only — not financial advice." />
+  <meta property="og:url" content="https://finsight-ai-jd.web.app/#briefing" />
+  <meta property="og:type" content="website" />
+  <link rel="stylesheet" href="/styles.css?v=share-card-1" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -43,7 +48,9 @@
           <h2 id="briefing-heading">Today's market briefing</h2>
           <p class="briefing-subtitle">S&amp;P 500, crypto, and a plain-English AI summary — loads automatically</p>
         </div>
-        <button type="button" id="fetch-btn" class="btn-refresh">Refresh</button>
+        <div class="briefing-actions">
+          <button type="button" id="fetch-btn" class="btn-refresh">Refresh</button>
+        </div>
       </div>
       <div id="output">
         <div class="loading"><span class="loading-pulse" aria-hidden="true"></span>Loading today's market briefing...</div>
@@ -312,6 +319,6 @@
     window.firebaseAuthFunctions = { signInWithPopup, signOut, onAuthStateChanged };
     window.firebaseFirestoreFunctions = { doc, getDoc, setDoc, collection, onSnapshot, query, where, orderBy, limit };
   </script>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=share-card-1"></script>
 </body>
 </html>

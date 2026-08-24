@@ -1,3 +1,311 @@
+/** Latest briefing payload for shareable card generation */
+let lastBriefingData = null;
+
+function getBriefingShareUrl() {
+  const url = new URL(window.location.href);
+  url.hash = 'briefing';
+  url.search = '';
+  return url.toString();
+}
+
+function formatSignedPercent(value) {
+  if (value == null || Number.isNaN(Number(value))) return '—';
+  const n = Number(value);
+  return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+}
+
+function truncateText(text, maxLen) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxLen) return clean;
+  return `${clean.slice(0, maxLen - 1).trim()}…`;
+}
+
+function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+      if (lines.length >= maxLines) break;
+    } else {
+      line = test;
+    }
+  }
+  if (lines.length < maxLines && line) lines.push(line);
+  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
+    let last = lines[maxLines - 1];
+    while (ctx.measureText(`${last}…`).width > maxWidth && last.length > 0) {
+      last = last.slice(0, -1);
+    }
+    lines[maxLines - 1] = `${last}…`;
+  }
+
+  lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
+  return lines.length;
+}
+
+function buildShareCaption(data) {
+  const date = data?.date || 'Today';
+  const sp = data?.markets?.sp500;
+  const btc = data?.markets?.crypto?.btc;
+  const bits = [`FinSight AI — today's market in plain English (${date})`];
+  if (sp) bits.push(`S&P 500 (SPY) $${sp.price.toFixed(2)} (${formatSignedPercent(sp.changePercent)})`);
+  if (btc) bits.push(`BTC $${Number(btc.price).toLocaleString()} (${formatSignedPercent(btc.change24h)} 24h)`);
+  bits.push(truncateText(data?.summary, 180));
+  bits.push('Educational only — not financial advice.');
+  bits.push(getBriefingShareUrl());
+  return bits.join('\n');
+}
+
+async function renderBriefingShareCard(data) {
+  const W = 1200;
+  const H = 630;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  try {
+    await document.fonts.ready;
+  } catch (_) { /* ignore */ }
+
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#e8f4f2');
+  grad.addColorStop(0.45, '#f4f7f6');
+  grad.addColorStop(1, '#dbeafe');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = 'rgba(15, 118, 110, 0.12)';
+  ctx.beginPath();
+  ctx.arc(1040, -40, 280, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(3, 105, 161, 0.1)';
+  ctx.beginPath();
+  ctx.arc(-40, 520, 260, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255, 253, 249, 0.92)';
+  roundRect(ctx, 48, 48, W - 96, H - 96, 28);
+  ctx.fill();
+
+  ctx.fillStyle = '#0f766e';
+  ctx.fillRect(48, 48, 14, H - 96);
+
+  ctx.fillStyle = '#102a2e';
+  ctx.font = '800 42px Syne, Avenir Next, Segoe UI, sans-serif';
+  ctx.fillText('FinSight AI', 90, 120);
+
+  ctx.fillStyle = '#6b8589';
+  ctx.font = '600 22px Figtree, Segoe UI, sans-serif';
+  ctx.fillText("Today's market in plain English", 90, 158);
+
+  const dateLabel = data?.date || 'Today';
+  ctx.font = '700 18px Figtree, Segoe UI, sans-serif';
+  const dateW = Math.ceil(ctx.measureText(dateLabel).width) + 36;
+  ctx.fillStyle = '#ccfbf1';
+  roundRect(ctx, 90, 180, dateW, 40, 20);
+  ctx.fill();
+  ctx.fillStyle = '#115e59';
+  ctx.fillText(dateLabel, 108, 207);
+
+  const metrics = [];
+  const sp = data?.markets?.sp500;
+  const btc = data?.markets?.crypto?.btc;
+  const eth = data?.markets?.crypto?.eth;
+  if (sp) {
+    metrics.push({
+      label: 'S&P 500',
+      value: `$${sp.price.toFixed(2)}`,
+      change: formatSignedPercent(sp.changePercent),
+      up: sp.changePercent >= 0
+    });
+  }
+  if (btc) {
+    metrics.push({
+      label: 'Bitcoin',
+      value: `$${Number(btc.price).toLocaleString()}`,
+      change: formatSignedPercent(btc.change24h),
+      up: btc.change24h >= 0
+    });
+  }
+  if (eth) {
+    metrics.push({
+      label: 'Ethereum',
+      value: `$${Number(eth.price).toLocaleString()}`,
+      change: formatSignedPercent(eth.change24h),
+      up: eth.change24h >= 0
+    });
+  }
+
+  const cardW = metrics.length === 1 ? 320 : metrics.length === 2 ? 300 : 280;
+  const gap = 18;
+  const totalW = metrics.length * cardW + Math.max(0, metrics.length - 1) * gap;
+  let mx = 90;
+  if (metrics.length && totalW < W - 180) {
+    /* keep left-aligned under brand */
+  }
+
+  metrics.forEach((m, i) => {
+    const x = mx + i * (cardW + gap);
+    const y = 250;
+    ctx.fillStyle = '#ffffff';
+    roundRect(ctx, x, y, cardW, 118, 16);
+    ctx.fill();
+    ctx.strokeStyle = '#d7e4e6';
+    ctx.lineWidth = 2;
+    roundRect(ctx, x, y, cardW, 118, 16);
+    ctx.stroke();
+
+    ctx.fillStyle = '#6b8589';
+    ctx.font = '700 14px Figtree, Segoe UI, sans-serif';
+    ctx.fillText(m.label.toUpperCase(), x + 18, y + 32);
+
+    ctx.fillStyle = '#102a2e';
+    ctx.font = '800 28px Syne, Avenir Next, Segoe UI, sans-serif';
+    ctx.fillText(m.value, x + 18, y + 68);
+
+    ctx.fillStyle = m.up ? '#047857' : '#be123c';
+    ctx.font = '700 18px Figtree, Segoe UI, sans-serif';
+    ctx.fillText(m.change, x + 18, y + 98);
+  });
+
+  const summaryTop = metrics.length ? 400 : 250;
+  ctx.fillStyle = '#134e4a';
+  ctx.font = '700 18px Figtree, Segoe UI, sans-serif';
+  ctx.fillText('AI summary', 90, summaryTop);
+
+  ctx.fillStyle = '#3d5a5f';
+  ctx.font = '500 22px Figtree, Segoe UI, sans-serif';
+  wrapCanvasText(ctx, data?.summary || 'Summary unavailable', 90, summaryTop + 34, W - 220, 30, 4);
+
+  ctx.fillStyle = '#6b8589';
+  ctx.font = '500 16px Figtree, Segoe UI, sans-serif';
+  ctx.fillText('Educational only — not financial advice  ·  finsight-ai-jd.web.app', 90, H - 70);
+
+  return canvas;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function showShareToast(message) {
+  const el = document.getElementById('share-toast');
+  if (!el) return;
+  el.textContent = message;
+  clearTimeout(showShareToast._t);
+  showShareToast._t = setTimeout(() => {
+    if (el.textContent === message) el.textContent = '';
+  }, 2500);
+}
+
+function bindBriefingShareActions() {
+  const downloadBtn = document.getElementById('share-download-btn');
+  const copyLinkBtn = document.getElementById('share-copy-link-btn');
+  const copyTextBtn = document.getElementById('share-copy-text-btn');
+  const nativeBtn = document.getElementById('share-native-btn');
+
+  if (downloadBtn) {
+    downloadBtn.addEventListener('click', async () => {
+      if (!lastBriefingData) return;
+      downloadBtn.disabled = true;
+      try {
+        const canvas = await renderBriefingShareCard(lastBriefingData);
+        const dateSlug = String(lastBriefingData.date || 'today').replace(/[^\w.-]+/g, '-');
+        const link = document.createElement('a');
+        link.download = `finsight-briefing-${dateSlug}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        showShareToast('Card downloaded');
+      } catch (err) {
+        console.error(err);
+        showShareToast('Could not create image');
+      } finally {
+        downloadBtn.disabled = false;
+      }
+    });
+  }
+
+  if (copyLinkBtn) {
+    copyLinkBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(getBriefingShareUrl());
+        showShareToast('Link copied');
+      } catch (_) {
+        showShareToast('Could not copy link');
+      }
+    });
+  }
+
+  if (copyTextBtn) {
+    copyTextBtn.addEventListener('click', async () => {
+      if (!lastBriefingData) return;
+      try {
+        await navigator.clipboard.writeText(buildShareCaption(lastBriefingData));
+        showShareToast('Caption copied');
+      } catch (_) {
+        showShareToast('Could not copy text');
+      }
+    });
+  }
+
+  if (nativeBtn) {
+    if (!navigator.share) {
+      nativeBtn.hidden = true;
+    } else {
+      nativeBtn.addEventListener('click', async () => {
+        if (!lastBriefingData) return;
+        try {
+          const canvas = await renderBriefingShareCard(lastBriefingData);
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+          const file = blob
+            ? new File([blob], 'finsight-briefing.png', { type: 'image/png' })
+            : null;
+          const payload = {
+            title: 'FinSight AI — today\'s market',
+            text: buildShareCaption(lastBriefingData),
+            url: getBriefingShareUrl()
+          };
+          if (file && navigator.canShare?.({ files: [file] })) {
+            await navigator.share({ ...payload, files: [file] });
+          } else {
+            await navigator.share(payload);
+          }
+          showShareToast('Shared');
+        } catch (err) {
+          if (err?.name !== 'AbortError') showShareToast('Share cancelled');
+        }
+      });
+    }
+  }
+}
+
+function renderBriefingShareBar() {
+  const canNative = typeof navigator.share === 'function';
+  return `
+    <div class="briefing-share" role="group" aria-label="Share today's briefing">
+      <span class="briefing-share-label">Share</span>
+      <button type="button" id="share-download-btn" class="btn-share primary">Download card</button>
+      <button type="button" id="share-copy-link-btn" class="btn-share">Copy link</button>
+      <button type="button" id="share-copy-text-btn" class="btn-share">Copy caption</button>
+      <button type="button" id="share-native-btn" class="btn-share"${canNative ? '' : ' hidden'}>Share…</button>
+      <span id="share-toast" class="share-toast" aria-live="polite"></span>
+    </div>
+  `;
+}
+
 async function fetchBriefing() {
   const btn = document.getElementById('fetch-btn');
   const output = document.getElementById('output');
@@ -14,6 +322,7 @@ async function fetchBriefing() {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
     const data = await res.json();
+    lastBriefingData = data;
 
     let marketsHTML = '';
     
@@ -73,10 +382,13 @@ async function fetchBriefing() {
           <h2>AI summary</h2>
           <p>${data.summary || 'Summary unavailable'}</p>
         </div>
+        ${renderBriefingShareBar()}
       </div>
     `;
+    bindBriefingShareActions();
 
   } catch (err) {
+    lastBriefingData = null;
     output.innerHTML = `
       <div class="error">
         <strong>Error loading briefing:</strong><br>
@@ -1097,7 +1409,11 @@ window.addEventListener('DOMContentLoaded', () => {
   
   // Auto-load Mag7, briefing (server-cached), and learning tips
   loadMagnificent7();
-  fetchBriefing();
+  fetchBriefing().then(() => {
+    if (window.location.hash === '#briefing') {
+      document.getElementById('briefing-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
   initLearningTips();
 
   // Setup auth
