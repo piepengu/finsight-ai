@@ -797,6 +797,51 @@ input:focus {
   font-size: 0.92rem;
 }
 
+.watchlist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: center;
+}
+
+.btn-table {
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.btn-table:hover { transform: translateY(-1px); }
+
+.btn-table-explain {
+  background: #fff;
+  color: var(--ocean);
+  border-color: #bae6fd;
+}
+
+.btn-table-explain:hover { background: var(--ocean-soft); }
+
+.btn-table-trade {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.btn-table-trade:hover { background: var(--accent-deep); }
+
+.btn-table-remove {
+  background: #fff;
+  color: var(--bad);
+  border-color: #fecdd3;
+}
+
+.btn-table-remove:hover { background: #fff1f2; }
+
 .chart-frame {
   background: #fff;
   padding: 1.25rem;

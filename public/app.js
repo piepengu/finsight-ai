@@ -1017,6 +1017,56 @@ function initAuth() {
 }
 
 // Watchlist Functions
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function prepareTradeFromWatchlist(symbol) {
+  const sym = String(symbol || '').trim().toUpperCase();
+  if (!sym) return;
+
+  const symbolInput = document.getElementById('stock-symbol');
+  const qtyInput = document.getElementById('stock-quantity');
+  const messageDiv = document.getElementById('trading-message');
+
+  if (symbolInput) symbolInput.value = sym;
+  if (qtyInput) qtyInput.value = '1';
+  if (messageDiv) messageDiv.innerHTML = '';
+
+  document.getElementById('portfolio-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  symbolInput?.focus();
+}
+
+function explainFromWatchlist(symbol) {
+  const sym = String(symbol || '').trim().toUpperCase();
+  if (!sym) return;
+
+  document.getElementById('explain-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  explainCompany(sym);
+}
+
+function handleWatchlistAction(event) {
+  const btn = event.target.closest('[data-watchlist-action]');
+  if (!btn) return;
+
+  const action = btn.dataset.watchlistAction;
+  const symbol = btn.dataset.symbol;
+  if (!symbol) return;
+
+  if (action === 'explain') {
+    explainFromWatchlist(symbol);
+  } else if (action === 'trade') {
+    prepareTradeFromWatchlist(symbol);
+  } else if (action === 'remove') {
+    removeFromWatchlist(symbol);
+  }
+}
+
 async function addToWatchlist() {
   const symbolInput = document.getElementById('watchlist-symbol');
   const messageDiv = document.getElementById('watchlist-message');
@@ -1103,7 +1153,7 @@ async function removeFromWatchlist(symbol) {
   }
 }
 
-// Make removeFromWatchlist globally accessible
+// Make removeFromWatchlist globally accessible (legacy onclick + table actions)
 window.removeFromWatchlist = removeFromWatchlist;
 
 async function updateWatchlistTable(watchlistItems) {
@@ -1157,10 +1207,11 @@ async function updateWatchlistTable(watchlistItems) {
   prices.forEach((stock) => {
     const changeClass = stock.changePercent >= 0 ? 'positive' : 'negative';
     const changeSign = stock.changePercent >= 0 ? '+' : '';
+    const safeSymbol = escapeHtml(stock.symbol);
     
     html += `
       <tr>
-        <td style="padding: 1rem; font-weight: 600;">${stock.symbol}</td>
+        <td style="padding: 1rem; font-weight: 600;">${safeSymbol}</td>
         <td style="padding: 1rem; text-align: right; font-weight: 600;">$${stock.price.toFixed(2)}</td>
         <td style="padding: 1rem; text-align: right;">
           <span class="change ${changeClass}" style="font-weight: 600;">
@@ -1169,7 +1220,11 @@ async function updateWatchlistTable(watchlistItems) {
           </span>
         </td>
         <td style="padding: 1rem; text-align: center;">
-          <button onclick="removeFromWatchlist('${stock.symbol}')" style="padding: 0.5rem 1rem; background: #dc2626; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem;">Remove</button>
+          <div class="watchlist-actions">
+            <button type="button" class="btn-table btn-table-explain" data-watchlist-action="explain" data-symbol="${safeSymbol}">Explain</button>
+            <button type="button" class="btn-table btn-table-trade" data-watchlist-action="trade" data-symbol="${safeSymbol}">Trade</button>
+            <button type="button" class="btn-table btn-table-remove" data-watchlist-action="remove" data-symbol="${safeSymbol}">Remove</button>
+          </div>
         </td>
       </tr>
     `;
@@ -1198,11 +1253,15 @@ function setupWatchlistListener(userId) {
 }
 
 // Explain It Feature
-async function explainCompany() {
+async function explainCompany(symbolOverride) {
   const symbolInput = document.getElementById('explain-symbol');
   const messageDiv = document.getElementById('explain-message');
   const resultDiv = document.getElementById('explain-result');
   const explainBtn = document.getElementById('explain-btn');
+
+  if (symbolOverride) {
+    symbolInput.value = String(symbolOverride).trim().toUpperCase();
+  }
   
   const symbol = symbolInput.value.trim().toUpperCase();
   
@@ -1428,6 +1487,11 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('buy-btn').addEventListener('click', buyStock);
     document.getElementById('sell-btn').addEventListener('click', sellStock);
     document.getElementById('add-watchlist-btn').addEventListener('click', addToWatchlist);
+
+    const watchlistTbody = document.getElementById('watchlist-tbody');
+    if (watchlistTbody) {
+      watchlistTbody.addEventListener('click', handleWatchlistAction);
+    }
     
     // Explain It feature
     document.getElementById('explain-btn').addEventListener('click', explainCompany);
