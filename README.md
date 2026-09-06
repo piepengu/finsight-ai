@@ -31,6 +31,7 @@ Browser (public/)  ──►  Firebase Hosting
 
 - Auto-loading daily briefing (S&P 500 / SPY, BTC, ETH + AI summary)
 - Shareable briefing card (download PNG, copy link/caption, native share)
+- Magnificent 7 banner with **Explain** (no sign-in) and **Practice** (sign-in to trade)
 - Watchlist with one-click **Explain** and **Trade** shortcuts
 - Magnificent 7 banner with stale-full cache + scheduled refresh
 - Virtual portfolio (Google Sign-In, buy/sell, P&L, history chart)

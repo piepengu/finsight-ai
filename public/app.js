@@ -403,6 +403,68 @@ async function fetchBriefing() {
   }
 }
 
+/** Prefill practice trade after sign-in when user clicked Practice on Mag7 while signed out */
+let pendingTradeSymbol = null;
+
+function isSignedIn() {
+  return !!(window.firebaseAuth && window.firebaseAuth.currentUser);
+}
+
+function promptSignInForPractice(symbol) {
+  const sym = String(symbol || '').trim().toUpperCase();
+  if (!sym) return;
+
+  pendingTradeSymbol = sym;
+
+  const prompt = document.getElementById('signin-prompt');
+  const promptCopy = prompt?.querySelector('p');
+  if (promptCopy) {
+    promptCopy.textContent = `Sign in free to practice a virtual trade in ${sym} — then buy 1 share and watch P&L update.`;
+  }
+
+  prompt?.classList.add('signin-prompt-highlight');
+  clearTimeout(promptSignInForPractice._t);
+  promptSignInForPractice._t = setTimeout(() => {
+    prompt?.classList.remove('signin-prompt-highlight');
+  }, 2200);
+
+  prompt?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function practiceFromMag7(symbol) {
+  const sym = String(symbol || '').trim().toUpperCase();
+  if (!sym) return;
+
+  if (isSignedIn()) {
+    prepareTradeFromWatchlist(sym);
+    return;
+  }
+  promptSignInForPractice(sym);
+}
+
+function applyPendingTradeAfterSignIn() {
+  if (!pendingTradeSymbol || !isSignedIn()) return;
+  const sym = pendingTradeSymbol;
+  pendingTradeSymbol = null;
+  // Portfolio section appears after auth; wait a tick for display:block
+  setTimeout(() => prepareTradeFromWatchlist(sym), 250);
+}
+
+function handleMag7Action(event) {
+  const btn = event.target.closest('[data-mag7-action]');
+  if (!btn) return;
+
+  const action = btn.dataset.mag7Action;
+  const symbol = btn.dataset.symbol;
+  if (!symbol) return;
+
+  if (action === 'explain') {
+    explainFromWatchlist(symbol);
+  } else if (action === 'practice') {
+    practiceFromMag7(symbol);
+  }
+}
+
 async function loadMagnificent7() {
   const bannerContent = document.getElementById('magnificent7-content');
   
@@ -427,13 +489,19 @@ async function loadMagnificent7() {
       
       data.stocks.forEach(stock => {
         const changeClass = stock.changePercent >= 0 ? 'positive' : 'negative';
+        const safeSymbol = escapeHtml(stock.symbol);
+        const safeName = escapeHtml(stock.name || stock.symbol);
         stocksHTML += `
           <div class="magnificent7-item">
-            <div class="symbol">${stock.symbol}</div>
-            <div class="name">${stock.name}</div>
+            <div class="symbol">${safeSymbol}</div>
+            <div class="name">${safeName}</div>
             <div class="price">$${stock.price.toFixed(2)}</div>
             <div class="change ${changeClass}">
               ${stock.changePercent >= 0 ? '+' : ''}${stock.changePercent.toFixed(2)}%
+            </div>
+            <div class="magnificent7-item-actions">
+              <button type="button" class="btn-mag7 btn-mag7-explain" data-mag7-action="explain" data-symbol="${safeSymbol}">Explain</button>
+              <button type="button" class="btn-mag7 btn-mag7-practice" data-mag7-action="practice" data-symbol="${safeSymbol}">Practice</button>
             </div>
           </div>
         `;
@@ -1005,13 +1073,21 @@ function initAuth() {
       if (signinPrompt) signinPrompt.style.display = 'none';
       setupPortfolioListeners(user.uid);
       setupWatchlistListener(user.uid);
+      applyPendingTradeAfterSignIn();
     } else {
       // User is signed out
       loginBtn.style.display = 'block';
       userInfo.style.display = 'none';
       portfolioSection.style.display = 'none';
       document.getElementById('watchlist-section').style.display = 'none';
-      if (signinPrompt) signinPrompt.style.display = 'flex';
+      if (signinPrompt) {
+        signinPrompt.style.display = 'flex';
+        const promptCopy = signinPrompt.querySelector('p');
+        if (promptCopy) {
+          promptCopy.textContent = 'Use a free account for your virtual portfolio, practice trades, P&L tracking, and a personal watchlist.';
+        }
+        signinPrompt.classList.remove('signin-prompt-highlight');
+      }
     }
   });
 }
@@ -1467,6 +1543,10 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   
   // Auto-load Mag7, briefing (server-cached), and learning tips
+  const mag7Content = document.getElementById('magnificent7-content');
+  if (mag7Content) {
+    mag7Content.addEventListener('click', handleMag7Action);
+  }
   loadMagnificent7();
   fetchBriefing().then(() => {
     if (window.location.hash === '#briefing') {
