@@ -1335,8 +1335,9 @@ async function explainCompany(symbolOverride) {
   const resultDiv = document.getElementById('explain-result');
   const explainBtn = document.getElementById('explain-btn');
 
-  if (symbolOverride) {
-    symbolInput.value = String(symbolOverride).trim().toUpperCase();
+  // Click handlers pass a PointerEvent as the first arg — only accept real symbol strings
+  if (typeof symbolOverride === 'string' && symbolOverride.trim()) {
+    symbolInput.value = symbolOverride.trim().toUpperCase();
   }
   
   const symbol = symbolInput.value.trim().toUpperCase();
