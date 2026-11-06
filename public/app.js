@@ -800,23 +800,54 @@ async function updateHoldingsTable(holdings) {
     return;
   }
 
-  // Fetch current prices for all holdings
-  const holdingsWithPrices = await Promise.all(holdings.map(async (holding) => {
-    try {
-      const res = await fetch(`/api/stockPrice?symbol=${holding.symbol}`);
-      const data = await res.json();
-      return { ...holding, currentPrice: data.price || 0 };
-    } catch (err) {
-      return { ...holding, currentPrice: holding.avgPrice || 0 };
+  // Fetch quotes sequentially to avoid Alpha Vantage rate-limit zeros
+  const holdingsWithPrices = [];
+  for (let i = 0; i < holdings.length; i++) {
+    const holding = holdings[i];
+    if (i > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
     }
-  }));
+    try {
+      const token = await window.firebaseAuth?.currentUser?.getIdToken();
+      const res = await fetch(`/api/stockPrice?symbol=${encodeURIComponent(holding.symbol)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      const price = Number(data.price);
+      if (res.ok && Number.isFinite(price) && price > 0) {
+        holdingsWithPrices.push({ ...holding, currentPrice: price, priceAvailable: true });
+      } else {
+        holdingsWithPrices.push({ ...holding, currentPrice: null, priceAvailable: false });
+      }
+    } catch (err) {
+      holdingsWithPrices.push({ ...holding, currentPrice: null, priceAvailable: false });
+    }
+  }
 
   let totalValue = 0;
   let html = '';
   
   holdingsWithPrices.forEach((holding) => {
-    const value = holding.shares * holding.currentPrice;
     const cost = holding.totalCost || (holding.shares * holding.avgPrice);
+    const safeSymbol = escapeHtml(holding.symbol);
+
+    if (!holding.priceAvailable) {
+      html += `
+        <tr>
+          <td style="padding: 1rem; font-weight: 600;">${safeSymbol}</td>
+          <td style="padding: 1rem; text-align: right;">${holding.shares}</td>
+          <td style="padding: 1rem; text-align: right;">$${holding.avgPrice.toFixed(2)}</td>
+          <td style="padding: 1rem; text-align: right; color: var(--muted);">—</td>
+          <td style="padding: 1rem; text-align: right; color: var(--muted);">—</td>
+          <td style="padding: 1rem; text-align: right; color: var(--muted);">Price unavailable</td>
+        </tr>
+      `;
+      // Keep portfolio totals sane: fall back to cost basis until a live quote arrives
+      totalValue += cost;
+      return;
+    }
+
+    const value = holding.shares * holding.currentPrice;
     const pl = value - cost;
     const plPercent = cost > 0 ? ((pl / cost) * 100) : 0;
     totalValue += value;
@@ -824,7 +855,7 @@ async function updateHoldingsTable(holdings) {
     const plClass = pl >= 0 ? 'positive' : 'negative';
     html += `
       <tr>
-        <td style="padding: 1rem; font-weight: 600;">${holding.symbol}</td>
+        <td style="padding: 1rem; font-weight: 600;">${safeSymbol}</td>
         <td style="padding: 1rem; text-align: right;">${holding.shares}</td>
         <td style="padding: 1rem; text-align: right;">$${holding.avgPrice.toFixed(2)}</td>
         <td style="padding: 1rem; text-align: right;">$${holding.currentPrice.toFixed(2)}</td>
