@@ -930,6 +930,20 @@ async function loadPortfolioChart(userId) {
   }
 }
 
+function formatChartLabel(date, { includeTime = false, includeSeconds = false } = {}) {
+  const opts = {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  };
+  if (includeTime) {
+    opts.hour = '2-digit';
+    opts.minute = '2-digit';
+    if (includeSeconds) opts.second = '2-digit';
+  }
+  return date.toLocaleString('en-US', opts);
+}
+
 function renderPortfolioChart(snapshots) {
   const canvas = document.getElementById('portfolio-chart');
   if (!canvas) {
@@ -944,27 +958,34 @@ function renderPortfolioChart(snapshots) {
     return;
   }
 
-  const ctx = canvas.getContext('2d');
+  // Ensure chronological order client-side too
+  const ordered = [...snapshots].sort(
+    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+  );
 
-  // Prepare data
-  const labels = snapshots.map((s, index) => {
+  const ctx = canvas.getContext('2d');
+  const spanMs = new Date(ordered[ordered.length - 1].timestamp) - new Date(ordered[0].timestamp);
+  const multiDay = spanMs > 36 * 60 * 60 * 1000;
+
+  const labels = ordered.map((s, index) => {
     const date = new Date(s.timestamp);
-    // Check if this point is close to the previous one (within 1 hour)
-    const showSeconds = index > 0 && 
-      Math.abs(date.getTime() - new Date(snapshots[index - 1].timestamp).getTime()) < 3600000;
-    
-    if (showSeconds) {
-      // Show seconds when points are close together
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } else {
-      // Normal format for points that are far apart
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const prev = index > 0 ? new Date(ordered[index - 1].timestamp) : null;
+    const closeToPrev = prev && Math.abs(date - prev) < 3600000;
+    // Always include year so Nov 2025 → Nov 2026 never looks "backwards"
+    if (multiDay && !closeToPrev) {
+      return formatChartLabel(date, { includeTime: false });
     }
+    return formatChartLabel(date, {
+      includeTime: true,
+      includeSeconds: closeToPrev
+    });
   });
-  
-  const portfolioValues = snapshots.map(s => s.portfolioValue || 0);
+
+  const portfolioValues = ordered.map((s) => Number(s.portfolioValue) || 0);
   const startingCapital = 10000;
-  const baseline = new Array(snapshots.length).fill(startingCapital);
+  const baseline = new Array(ordered.length).fill(startingCapital);
+  // Straight segments when sparse; soft curve only with denser history
+  const tension = ordered.length >= 6 ? 0.25 : 0;
 
   // Destroy existing chart if it exists
   if (portfolioChart) {
@@ -978,18 +999,18 @@ function renderPortfolioChart(snapshots) {
       labels: labels,
       datasets: [
         {
-          label: 'Portfolio Value',
+          label: 'Total portfolio (cash + holdings)',
           data: portfolioValues,
-          borderColor: '#2563eb',
-          backgroundColor: 'rgba(37, 99, 235, 0.1)',
+          borderColor: '#0f766e',
+          backgroundColor: 'rgba(15, 118, 110, 0.12)',
           borderWidth: 2,
           fill: true,
-          tension: 0.4,
-          pointRadius: 3,
-          pointHoverRadius: 5
+          tension,
+          pointRadius: ordered.length <= 4 ? 4 : 3,
+          pointHoverRadius: 6
         },
         {
-          label: 'Starting Capital ($10,000)',
+          label: 'Starting capital ($10,000)',
           data: baseline,
           borderColor: '#9ca3af',
           backgroundColor: 'transparent',
@@ -1012,6 +1033,13 @@ function renderPortfolioChart(snapshots) {
           mode: 'index',
           intersect: false,
           callbacks: {
+            title: function(items) {
+              const idx = items[0]?.dataIndex;
+              if (idx == null) return '';
+              return formatChartLabel(new Date(ordered[idx].timestamp), {
+                includeTime: true
+              });
+            },
             label: function(context) {
               return context.dataset.label + ': $' + context.parsed.y.toFixed(2);
             }
@@ -1033,6 +1061,12 @@ function renderPortfolioChart(snapshots) {
         x: {
           grid: {
             display: false
+          },
+          ticks: {
+            maxRotation: 45,
+            minRotation: 0,
+            autoSkip: true,
+            maxTicksLimit: 6
           }
         }
       },

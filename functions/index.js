@@ -879,7 +879,7 @@ async function logTransaction(userId, type, symbol, shares, price, totalAmount) 
   }
 }
 
-// Helper function to record portfolio snapshot
+// Helper function to record portfolio snapshot (mark-to-market when quotes are available)
 async function recordPortfolioSnapshot(userId, alphaKeyValue) {
   try {
     // Get account balance
@@ -898,14 +898,24 @@ async function recordPortfolioSnapshot(userId, alphaKeyValue) {
     
     let portfolioValue = cashBalance;
     
-    // Calculate total portfolio value
-    // Use avgPrice as fallback to avoid rate limits - we'll get fresh prices when displaying
-    for (const doc of portfolioSnapshot.docs) {
+    // Prefer live quotes so chart history reflects market moves, not just cost basis
+    for (let i = 0; i < portfolioSnapshot.docs.length; i++) {
+      const doc = portfolioSnapshot.docs[i];
       const holding = doc.data();
-      // Use avgPrice as fallback to avoid API rate limits during snapshot creation
-      // The frontend will fetch fresh prices when displaying holdings
-      const currentValue = holding.shares * (holding.avgPrice || 0);
-      portfolioValue += currentValue;
+      const symbol = doc.id;
+      let price = holding.avgPrice || 0;
+      if (alphaKeyValue) {
+        try {
+          if (i > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
+          price = await getStockPrice(symbol, alphaKeyValue);
+        } catch (err) {
+          logger.warn('Snapshot falling back to avgPrice', { symbol, error: err.message });
+          price = holding.avgPrice || 0;
+        }
+      }
+      portfolioValue += holding.shares * price;
     }
     
     // Record snapshot
@@ -916,8 +926,7 @@ async function recordPortfolioSnapshot(userId, alphaKeyValue) {
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    logger.info('Portfolio snapshot recorded', { userId, portfolioValue, cashBalance, holdingsCount: portfolioSnapshot.docs.length });
-  } catch (error) {
+    logger.info('Portfolio snapshot recorded', { userId, portfolioValue, cashBalance, holdingsCount: portfolioSnapshot.docs.length });  } catch (error) {
     logger.error('Error recording portfolio snapshot', { error: error.message, stack: error.stack });
     // Don't fail the transaction if snapshot fails
   }
@@ -1161,108 +1170,143 @@ exports.getPortfolioHistory = onRequest(
       const snapshots = [];
       snapshotsSnapshot.forEach((doc) => {
         const data = doc.data();
+        const ts = data.timestamp?.toDate?.() || null;
+        if (!ts) return;
         snapshots.push({
-          timestamp: data.timestamp?.toDate().toISOString() || new Date().toISOString(),
-          portfolioValue: data.portfolioValue || 0,
-          cashBalance: data.cashBalance || 0
+          timestamp: ts.toISOString(),
+          portfolioValue: Number(data.portfolioValue) || 0,
+          cashBalance: Number(data.cashBalance) || 0
         });
       });
-      
-      // Reverse to get chronological order (oldest first)
-      snapshots.reverse();
-      
+
+      // Chronological order (oldest → newest)
+      snapshots.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
       // Get current account balance and holdings for latest snapshot
       const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
       const accountDoc = await accountRef.get();
       const cashBalance = accountDoc.exists ? (accountDoc.data().balance || 10000) : 10000;
-      
+      const accountCreatedAt = accountDoc.exists && accountDoc.data().createdAt?.toDate
+        ? accountDoc.data().createdAt.toDate()
+        : null;
+
       const portfolioRef = db.collection('users').doc(userId).collection('portfolio');
       const portfolioSnapshot = await portfolioRef.get();
-      
-      // Calculate current portfolio value with current market prices (for latest snapshot)
-      let currentPortfolioValue = cashBalance;
+
       const holdings = [];
       for (const doc of portfolioSnapshot.docs) {
-        const holding = doc.data();
-        holdings.push({ symbol: doc.id, ...holding });
-        // For now, use avgPrice as fallback - we'll try to fetch current prices below
-        currentPortfolioValue += holding.shares * (holding.avgPrice || 0);
+        holdings.push({ symbol: doc.id, ...doc.data() });
       }
-      
-      // Try to fetch current prices for the latest snapshot (limit to avoid rate limits)
-      if (holdings.length > 0 && holdings.length <= 5) {
+
+      // Live mark-to-market for the latest chart point
+      let currentPortfolioValue = cashBalance;
+      if (holdings.length > 0) {
         try {
           const alphaKeyValue = alphaKey.value();
-          let updatedValue = cashBalance;
-          for (const holding of holdings) {
+          for (let i = 0; i < holdings.length; i++) {
+            const holding = holdings[i];
             try {
+              if (i > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+              }
               const currentPrice = await getStockPrice(holding.symbol, alphaKeyValue);
-              updatedValue += holding.shares * currentPrice;
+              currentPortfolioValue += holding.shares * currentPrice;
             } catch (err) {
-              // Fallback to avgPrice if price fetch fails
-              updatedValue += holding.shares * (holding.avgPrice || 0);
+              currentPortfolioValue += holding.shares * (holding.avgPrice || 0);
             }
           }
-          currentPortfolioValue = updatedValue;
         } catch (err) {
-          // If fetching prices fails, use avgPrice calculation
           logger.warn('Could not fetch current prices for portfolio history, using avgPrice', { error: err.message });
+          currentPortfolioValue = cashBalance;
+          for (const holding of holdings) {
+            currentPortfolioValue += holding.shares * (holding.avgPrice || 0);
+          }
         }
       }
-      
-      // If no snapshots exist, or only one snapshot exists, ensure we have at least 2 points
-      // This ensures a meaningful chart with proper time separation
-      if (snapshots.length <= 1) {
-        // Determine the earliest timestamp we have
-        let earliestTimestamp;
-        if (snapshots.length === 0) {
-          // No snapshots: create one from 1 day ago
-          earliestTimestamp = Date.now() - 86400000; // 1 day ago
-        } else {
-          // We have 1 snapshot: create one from 1 day before it
-          const firstSnapshotTime = new Date(snapshots[0].timestamp).getTime();
-          earliestTimestamp = firstSnapshotTime - 86400000; // 1 day before first snapshot
-        }
-        
-        // Insert synthetic starting point at the beginning
-        snapshots.unshift({
-          timestamp: new Date(earliestTimestamp).toISOString(),
-          portfolioValue: 10000, // Starting capital
+
+      // Guarantee a starting-capital anchor
+      if (snapshots.length === 0) {
+        const startTs = accountCreatedAt
+          ? accountCreatedAt.toISOString()
+          : new Date(Date.now() - 86400000).toISOString();
+        snapshots.push({
+          timestamp: startTs,
+          portfolioValue: 10000,
           cashBalance: 10000
         });
-      }
-      
-      // Always add/update the latest snapshot with current portfolio value
-      const now = new Date().toISOString();
-      const lastSnapshot = snapshots[snapshots.length - 1];
-      const timeDiff = lastSnapshot ? Math.abs(new Date(now).getTime() - new Date(lastSnapshot.timestamp).getTime()) : Infinity;
-      
-      // Add current snapshot if it's more than 30 seconds different from the last one, or if it's the first one
-      if (timeDiff > 30000 || snapshots.length === 0) {
-        // Update or add the latest snapshot
-        if (snapshots.length > 0 && timeDiff < 3600000) { // Less than 1 hour old, update it
-          snapshots[snapshots.length - 1] = {
-            timestamp: now,
-            portfolioValue: currentPortfolioValue,
-            cashBalance: cashBalance
-          };
-        } else {
-          // Add new snapshot
-          snapshots.push({
-            timestamp: now,
-            portfolioValue: currentPortfolioValue,
-            cashBalance: cashBalance
+      } else {
+        const first = snapshots[0];
+        // If first stored point isn't near starting capital, prepend account start / day-before
+        if (Math.abs(first.portfolioValue - 10000) > 1) {
+          const startTs = accountCreatedAt
+            ? accountCreatedAt.toISOString()
+            : new Date(new Date(first.timestamp).getTime() - 86400000).toISOString();
+          snapshots.unshift({
+            timestamp: startTs,
+            portfolioValue: 10000,
+            cashBalance: 10000
           });
         }
-      } else if (snapshots.length > 0) {
-        // Update the last snapshot's value even if timestamp is close
-        snapshots[snapshots.length - 1].portfolioValue = currentPortfolioValue;
-        snapshots[snapshots.length - 1].cashBalance = cashBalance;
       }
-      
+
+      // Append / refresh live "now" point
+      const now = new Date().toISOString();
+      const lastSnapshot = snapshots[snapshots.length - 1];
+      const timeDiff = lastSnapshot
+        ? Math.abs(new Date(now).getTime() - new Date(lastSnapshot.timestamp).getTime())
+        : Infinity;
+
+      if (timeDiff > 30000) {
+        snapshots.push({
+          timestamp: now,
+          portfolioValue: currentPortfolioValue,
+          cashBalance: cashBalance
+        });
+      } else {
+        snapshots[snapshots.length - 1] = {
+          timestamp: now,
+          portfolioValue: currentPortfolioValue,
+          cashBalance: cashBalance
+        };
+      }
+
+      // Collapse near-duplicate consecutive points (same value within $0.50 and < 2 minutes apart)
+      const cleaned = [];
+      for (const point of snapshots) {
+        const prev = cleaned[cleaned.length - 1];
+        if (!prev) {
+          cleaned.push(point);
+          continue;
+        }
+        const dt = Math.abs(new Date(point.timestamp) - new Date(prev.timestamp));
+        const dv = Math.abs(point.portfolioValue - prev.portfolioValue);
+        if (dt < 2 * 60 * 1000 && dv < 0.5) {
+          cleaned[cleaned.length - 1] = point; // keep the newer of the near-dupes
+          continue;
+        }
+        // Also drop flat cost-basis noise: long stretches stuck at ~$10k before the live point
+        cleaned.push(point);
+      }
+
+      // Keep meaningful shape: first point, last point, and any point that moves >= $1 from previous kept point
+      const shaped = [];
+      for (let i = 0; i < cleaned.length; i++) {
+        const point = cleaned[i];
+        if (i === 0 || i === cleaned.length - 1) {
+          shaped.push(point);
+          continue;
+        }
+        const prev = shaped[shaped.length - 1];
+        if (Math.abs(point.portfolioValue - prev.portfolioValue) >= 1) {
+          shaped.push(point);
+        }
+      }
+
       res.json({
         success: true,
-        snapshots: snapshots
+        snapshots: shaped,
+        currentPortfolioValue,
+        cashBalance
       });
       
     } catch (error) {

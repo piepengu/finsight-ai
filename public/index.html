@@ -143,6 +143,7 @@
 
       <div id="portfolio-chart-section" class="chart-section" style="margin-bottom: 1.5rem;">
         <h3>Portfolio performance</h3>
+        <p class="section-lead" style="margin-top: -0.35rem;">Total account value over time (cash + holdings at market prices).</p>
         <div class="chart-frame">
           <canvas id="portfolio-chart"></canvas>
         </div>
@@ -322,6 +323,6 @@
     window.firebaseAuthFunctions = { signInWithPopup, signOut, onAuthStateChanged };
     window.firebaseFirestoreFunctions = { doc, getDoc, setDoc, collection, onSnapshot, query, where, orderBy, limit };
   </script>
-  <script src="/app.js?v=fix-holdings-quote-1"></script>
+  <script src="/app.js?v=fix-chart-1"></script>
 </body>
 </html>
