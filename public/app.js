@@ -739,12 +739,74 @@ async function sellStock() {
   }
 }
 
+/**
+ * Holdings can exist without matching transaction rows (older buys before logging
+ * was reliable, or log failures that still completed the trade). Backfill one buy
+ * record per missing symbol from the holding's first purchase data.
+ */
+async function backfillMissingTransactions(userId) {
+  if (!window.firebaseDb || !window.firebaseFirestoreFunctions) return;
+  const { collection, getDocs, addDoc } = window.firebaseFirestoreFunctions;
+  if (!getDocs || !addDoc) return;
+
+  try {
+    const portfolioSnap = await getDocs(
+      collection(window.firebaseDb, 'users', userId, 'portfolio')
+    );
+    const txSnap = await getDocs(
+      collection(window.firebaseDb, 'users', userId, 'transactions')
+    );
+
+    const symbolsWithBuy = new Set();
+    txSnap.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      if (data.type === 'buy' && data.symbol) {
+        symbolsWithBuy.add(String(data.symbol).toUpperCase());
+      }
+    });
+
+    for (const holdingDoc of portfolioSnap.docs) {
+      const symbol = holdingDoc.id.toUpperCase();
+      if (symbolsWithBuy.has(symbol)) continue;
+
+      const holding = holdingDoc.data() || {};
+      const shares = Number(holding.shares) || 0;
+      if (shares <= 0) continue;
+
+      const price = Number(holding.avgPrice) || 0;
+      const totalAmount = holding.totalCost != null
+        ? Number(holding.totalCost)
+        : shares * price;
+      const timestamp = holding.firstPurchased || holding.lastUpdated || new Date();
+
+      await addDoc(collection(window.firebaseDb, 'users', userId, 'transactions'), {
+        type: 'buy',
+        symbol,
+        shares,
+        price,
+        totalAmount,
+        timestamp,
+        backfilled: true
+      });
+      console.info(`Backfilled missing buy transaction for ${symbol}`);
+    }
+  } catch (err) {
+    console.warn('Transaction backfill skipped:', err.message || err);
+  }
+}
+
 // Load portfolio data from Firestore
 function setupPortfolioListeners(userId) {
   if (!window.firebaseDb || !window.firebaseFirestoreFunctions) return;
 
   const { doc, onSnapshot, collection, query, orderBy, limit } = window.firebaseFirestoreFunctions;
   
+  // Repair history gaps once per page load
+  if (!window.__txBackfillStarted) {
+    window.__txBackfillStarted = true;
+    backfillMissingTransactions(userId);
+  }
+
   // Load portfolio chart
   loadPortfolioChart(userId);
   

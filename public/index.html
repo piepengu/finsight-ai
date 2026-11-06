@@ -300,7 +300,7 @@
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
     import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-    import { getFirestore, doc, getDoc, setDoc, collection, onSnapshot, query, where, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getFirestore, doc, getDoc, setDoc, addDoc, getDocs, collection, onSnapshot, query, where, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
     const firebaseConfig = {
       apiKey: "AIzaSyBN3LaYDWfhW9M2URxQXs6OZEvvjzIImnE",
@@ -321,8 +321,8 @@
     window.firebaseDb = db;
     window.googleProvider = googleProvider;
     window.firebaseAuthFunctions = { signInWithPopup, signOut, onAuthStateChanged };
-    window.firebaseFirestoreFunctions = { doc, getDoc, setDoc, collection, onSnapshot, query, where, orderBy, limit };
+    window.firebaseFirestoreFunctions = { doc, getDoc, setDoc, addDoc, getDocs, collection, onSnapshot, query, where, orderBy, limit };
   </script>
-  <script src="/app.js?v=fix-chart-1"></script>
+  <script src="/app.js?v=fix-tx-backfill-1"></script>
 </body>
 </html>

@@ -862,21 +862,16 @@ async function initializeAccount(userId) {
 
 // Helper function to log transaction
 async function logTransaction(userId, type, symbol, shares, price, totalAmount) {
-  try {
-    const transactionRef = db.collection('users').doc(userId).collection('transactions').doc();
-    await transactionRef.set({
-      type: type, // 'buy' or 'sell'
-      symbol: symbol,
-      shares: shares,
-      price: price,
-      totalAmount: totalAmount,
-      timestamp: admin.firestore.FieldValue.serverTimestamp()
-    });
-    logger.info('Transaction logged', { userId, type, symbol, shares });
-  } catch (error) {
-    logger.error('Error logging transaction', { error: error.message });
-    // Don't fail the transaction if logging fails
-  }
+  const transactionRef = db.collection('users').doc(userId).collection('transactions').doc();
+  await transactionRef.set({
+    type: type, // 'buy' or 'sell'
+    symbol: symbol,
+    shares: shares,
+    price: price,
+    totalAmount: totalAmount,
+    timestamp: admin.firestore.FieldValue.serverTimestamp()
+  });
+  logger.info('Transaction logged', { userId, type, symbol, shares });
 }
 
 // Helper function to record portfolio snapshot (mark-to-market when quotes are available)
