@@ -574,24 +574,55 @@ function handleHttpError(res, error, logLabel) {
 }
 
 // Helper function to get stock price with caching (5 minute cache)
-async function getStockPrice(symbol, alphaKeyValue) {
+function hasChangeFields(cachedData) {
+  return cachedData &&
+    typeof cachedData.change === 'number' &&
+    typeof cachedData.changePercent === 'number' &&
+    Number.isFinite(cachedData.change) &&
+    Number.isFinite(cachedData.changePercent);
+}
+
+function quoteFromCache(cachedData) {
+  if (!cachedData || cachedData.price == null || Number.isNaN(Number(cachedData.price))) {
+    return null;
+  }
+  const withChange = hasChangeFields(cachedData);
+  return {
+    symbol: cachedData.symbol,
+    price: Number(cachedData.price),
+    change: withChange ? Number(cachedData.change) : null,
+    changePercent: withChange ? Number(cachedData.changePercent) : null,
+    previousClose: cachedData.previousClose != null ? Number(cachedData.previousClose) : null,
+    high: cachedData.high != null ? Number(cachedData.high) : null,
+    low: cachedData.low != null ? Number(cachedData.low) : null,
+    incomplete: !withChange
+  };
+}
+
+/** Full quote (price + daily change). Used by watchlist / stockPrice HTTP API. */
+async function getStockQuote(symbol, alphaKeyValue) {
   const cacheKey = `stock_price_${symbol}`;
   const cacheRef = db.collection('cache').doc(cacheKey);
   const cacheDoc = await cacheRef.get();
-  
-  // Check if cached data exists and is less than 5 minutes old
+  const fiveMinutes = 5 * 60 * 1000;
+
   if (cacheDoc.exists) {
     const cachedData = cacheDoc.data();
-    const cacheAge = Date.now() - cachedData.timestamp.toMillis();
-    const fiveMinutes = 5 * 60 * 1000;
-    
-    if (cacheAge < fiveMinutes) {
-      logger.info(`Using cached price for ${symbol}`, { price: cachedData.price, age: Math.round(cacheAge / 1000) + 's' });
-      return cachedData.price;
+    const cacheAge = cachedData.timestamp?.toMillis
+      ? Date.now() - cachedData.timestamp.toMillis()
+      : Number.POSITIVE_INFINITY;
+
+    // Only reuse cache when it includes change fields (older price-only entries are incomplete)
+    if (cacheAge < fiveMinutes && hasChangeFields(cachedData)) {
+      logger.info(`Using cached quote for ${symbol}`, {
+        price: cachedData.price,
+        changePercent: cachedData.changePercent,
+        age: Math.round(cacheAge / 1000) + 's'
+      });
+      return quoteFromCache(cachedData);
     }
   }
 
-  // Fetch fresh price from API
   const response = await axios.get('https://www.alphavantage.co/query', {
     params: {
       function: 'GLOBAL_QUOTE',
@@ -601,11 +632,17 @@ async function getStockPrice(symbol, alphaKeyValue) {
   });
 
   if (response.data['Note'] || response.data['Information']) {
-    // If rate limited, try to return cached data even if stale
     if (cacheDoc.exists) {
       const cachedData = cacheDoc.data();
-      logger.warn(`Rate limited, using stale cache for ${symbol}`, { price: cachedData.price });
-      return cachedData.price;
+      // Prefer a complete stale quote over a price-only entry that would fake +0.00%
+      if (hasChangeFields(cachedData)) {
+        const stale = quoteFromCache(cachedData);
+        logger.warn(`Rate limited, using stale quote cache for ${symbol}`, {
+          price: stale.price,
+          changePercent: stale.changePercent
+        });
+        return stale;
+      }
     }
     throw new Error('Alpha Vantage API rate limit exceeded. Please try again later.');
   }
@@ -614,17 +651,47 @@ async function getStockPrice(symbol, alphaKeyValue) {
     throw new Error(`Invalid stock symbol: ${symbol}`);
   }
 
-  const price = parseFloat(response.data['Global Quote']['05. price']);
-  
-  // Cache the price
-  await cacheRef.set({
-    price: price,
-    symbol: symbol,
+  const quote = response.data['Global Quote'];
+  const price = parseFloat(quote['05. price']);
+  const change = parseFloat(quote['09. change'] || '0');
+  const changePercent = parseFloat(String(quote['10. change percent'] || '0').replace('%', ''));
+  const previousClose = parseFloat(quote['08. previous close'] || '0');
+  const high = parseFloat(quote['03. high'] || '0');
+  const low = parseFloat(quote['04. low'] || '0');
+
+  const payload = {
+    symbol,
+    price,
+    change: Number.isFinite(change) ? change : 0,
+    changePercent: Number.isFinite(changePercent) ? changePercent : 0,
+    previousClose: Number.isFinite(previousClose) ? previousClose : null,
+    high: Number.isFinite(high) ? high : null,
+    low: Number.isFinite(low) ? low : null,
     timestamp: admin.firestore.FieldValue.serverTimestamp()
+  };
+
+  await cacheRef.set(payload);
+  logger.info(`Cached quote for ${symbol}`, {
+    price: payload.price,
+    changePercent: payload.changePercent
   });
-  
-  logger.info(`Cached price for ${symbol}`, { price });
-  return price;
+
+  return {
+    symbol: payload.symbol,
+    price: payload.price,
+    change: payload.change,
+    changePercent: payload.changePercent,
+    previousClose: payload.previousClose,
+    high: payload.high,
+    low: payload.low,
+    incomplete: false
+  };
+}
+
+/** Price-only helper for buy/sell/portfolio math (keeps callers returning a number). */
+async function getStockPrice(symbol, alphaKeyValue) {
+  const quote = await getStockQuote(symbol, alphaKeyValue);
+  return quote.price;
 }
 
 // Helper function to search for stock symbol by company name or symbol
@@ -871,9 +938,17 @@ exports.getStockPrice = onRequest(
       }
 
       const alphaKeyValue = alphaKey.value();
-      const price = await getStockPrice(symbol, alphaKeyValue);
-      
-      res.json({ symbol, price });
+      const quote = await getStockQuote(symbol, alphaKeyValue);
+
+      res.json({
+        symbol: quote.symbol || symbol,
+        price: quote.price,
+        change: quote.change,
+        changePercent: quote.changePercent,
+        previousClose: quote.previousClose,
+        high: quote.high,
+        low: quote.low
+      });
     } catch (error) {
       logger.error('getStockPrice error', { error: error.message });
       res.status(500).json({ error: error.message });

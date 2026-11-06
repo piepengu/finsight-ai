@@ -1240,61 +1240,75 @@ async function updateWatchlistTable(watchlistItems) {
     return;
   }
 
-  // Fetch prices for all watchlist items
-  const pricePromises = watchlistItems.map(async (item) => {
+  // Fetch quotes one-by-one to reduce Alpha Vantage rate-limit collisions
+  const prices = [];
+  for (let i = 0; i < watchlistItems.length; i++) {
+    const item = watchlistItems[i];
+    if (i > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
     try {
       const token = await window.firebaseAuth.currentUser.getIdToken();
-      const res = await fetch(`/api/stockPrice?symbol=${item.symbol}`, {
+      const res = await fetch(`/api/stockPrice?symbol=${encodeURIComponent(item.symbol)}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
-      
+
       if (res.ok) {
         const data = await res.json();
-        return {
+        const price = Number(data.price);
+        const change = data.change == null ? null : Number(data.change);
+        const changePercent = data.changePercent == null ? null : Number(data.changePercent);
+        prices.push({
           symbol: item.symbol,
-          price: data.price || 0,
-          change: data.change || 0,
-          changePercent: data.changePercent || 0
-        };
+          price: Number.isFinite(price) ? price : 0,
+          change: Number.isFinite(change) ? change : null,
+          changePercent: Number.isFinite(changePercent) ? changePercent : null
+        });
+      } else {
+        prices.push({
+          symbol: item.symbol,
+          price: null,
+          change: null,
+          changePercent: null,
+          error: true
+        });
       }
-      return {
-        symbol: item.symbol,
-        price: 0,
-        change: 0,
-        changePercent: 0
-      };
     } catch (error) {
       console.error(`Error fetching price for ${item.symbol}:`, error);
-      return {
+      prices.push({
         symbol: item.symbol,
-        price: 0,
-        change: 0,
-        changePercent: 0
-      };
+        price: null,
+        change: null,
+        changePercent: null,
+        error: true
+      });
     }
-  });
-
-  const prices = await Promise.all(pricePromises);
+  }
 
   // Build table rows
   let html = '';
   prices.forEach((stock) => {
-    const changeClass = stock.changePercent >= 0 ? 'positive' : 'negative';
-    const changeSign = stock.changePercent >= 0 ? '+' : '';
     const safeSymbol = escapeHtml(stock.symbol);
-    
+    const priceText = stock.price == null ? '—' : `$${stock.price.toFixed(2)}`;
+    let changeHtml = '<span style="color: var(--muted);">—</span>';
+    if (stock.changePercent != null && stock.change != null) {
+      const changeClass = stock.changePercent >= 0 ? 'positive' : 'negative';
+      const changeSign = stock.changePercent >= 0 ? '+' : '';
+      changeHtml = `
+        <span class="change ${changeClass}" style="font-weight: 600;">
+          ${changeSign}${stock.changePercent.toFixed(2)}%
+          (${changeSign}$${stock.change.toFixed(2)})
+        </span>
+      `;
+    }
+
     html += `
       <tr>
         <td style="padding: 1rem; font-weight: 600;">${safeSymbol}</td>
-        <td style="padding: 1rem; text-align: right; font-weight: 600;">$${stock.price.toFixed(2)}</td>
-        <td style="padding: 1rem; text-align: right;">
-          <span class="change ${changeClass}" style="font-weight: 600;">
-            ${changeSign}${stock.changePercent.toFixed(2)}%
-            (${changeSign}$${stock.change.toFixed(2)})
-          </span>
-        </td>
+        <td style="padding: 1rem; text-align: right; font-weight: 600;">${priceText}</td>
+        <td style="padding: 1rem; text-align: right;">${changeHtml}</td>
         <td style="padding: 1rem; text-align: center;">
           <div class="watchlist-actions">
             <button type="button" class="btn-table btn-table-explain" data-watchlist-action="explain" data-symbol="${safeSymbol}">Explain</button>
