@@ -109,7 +109,7 @@
           </div>
           <div>
             <label for="stock-quantity">Quantity</label>
-            <input type="number" id="stock-quantity" placeholder="1" min="1" />
+            <input type="number" id="stock-quantity" value="1" min="1" step="1" />
           </div>
           <button type="button" id="buy-btn" class="btn-buy">Buy</button>
           <button type="button" id="sell-btn" class="btn-sell">Sell</button>
@@ -323,6 +323,6 @@
     window.firebaseAuthFunctions = { signInWithPopup, signOut, onAuthStateChanged };
     window.firebaseFirestoreFunctions = { doc, getDoc, setDoc, addDoc, getDocs, collection, onSnapshot, query, where, orderBy, limit };
   </script>
-  <script src="/app.js?v=fix-tx-backfill-1"></script>
+  <script src="/app.js?v=fix-trade-qty-1"></script>
 </body>
 </html>

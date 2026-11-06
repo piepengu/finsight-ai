@@ -629,14 +629,34 @@ async function signOutUser() {
   }
 }
 
+function readTradeForm() {
+  const symbol = (document.getElementById('stock-symbol')?.value || '').trim().toUpperCase();
+  const quantityRaw = document.getElementById('stock-quantity')?.value;
+  const quantity = Number.parseInt(String(quantityRaw ?? '').trim(), 10);
+  return { symbol, quantity };
+}
+
+function tradeFormValidationMessage(symbol, quantity) {
+  if (!symbol && (!Number.isFinite(quantity) || quantity < 1)) {
+    return 'Enter a stock symbol (e.g., TSM) and a quantity of at least 1.';
+  }
+  if (!symbol) {
+    return 'Enter a stock symbol (e.g., TSM or AAPL).';
+  }
+  if (!Number.isFinite(quantity) || quantity < 1) {
+    return 'Enter a whole-number quantity of at least 1.';
+  }
+  return '';
+}
+
 // Portfolio functions
 async function buyStock() {
-  const symbol = document.getElementById('stock-symbol').value.toUpperCase().trim();
-  const quantity = parseInt(document.getElementById('stock-quantity').value);
+  const { symbol, quantity } = readTradeForm();
   const messageDiv = document.getElementById('trading-message');
-  
-  if (!symbol || !quantity || quantity < 1) {
-    messageDiv.innerHTML = '<div class="error">Please enter a valid symbol and quantity.</div>';
+  const validationError = tradeFormValidationMessage(symbol, quantity);
+
+  if (validationError) {
+    messageDiv.innerHTML = `<div class="error">${validationError}</div>`;
     return;
   }
 
@@ -665,7 +685,7 @@ async function buyStock() {
     // Show success message with animation
     messageDiv.innerHTML = `<div style="color: #059669; padding: 0.75rem; background: #d1fae5; border-radius: 6px; font-weight: 600; animation: slideIn 0.3s ease-out;">✅ Successfully bought ${quantity} share(s) of ${symbol} at $${data.price.toFixed(2)}!</div>`;
     document.getElementById('stock-symbol').value = '';
-    document.getElementById('stock-quantity').value = '';
+    document.getElementById('stock-quantity').value = '1';
     
     // Clear message after 5 seconds
     setTimeout(() => {
@@ -684,12 +704,12 @@ async function buyStock() {
 }
 
 async function sellStock() {
-  const symbol = document.getElementById('stock-symbol').value.toUpperCase().trim();
-  const quantity = parseInt(document.getElementById('stock-quantity').value);
+  const { symbol, quantity } = readTradeForm();
   const messageDiv = document.getElementById('trading-message');
-  
-  if (!symbol || !quantity || quantity < 1) {
-    messageDiv.innerHTML = '<div class="error">Please enter a valid symbol and quantity.</div>';
+  const validationError = tradeFormValidationMessage(symbol, quantity);
+
+  if (validationError) {
+    messageDiv.innerHTML = `<div class="error">${validationError}</div>`;
     return;
   }
 
@@ -721,7 +741,7 @@ async function sellStock() {
       : ` (Loss: $${Math.abs(data.profitLoss).toFixed(2)})`;
     messageDiv.innerHTML = `<div style="color: #059669; padding: 0.75rem; background: #d1fae5; border-radius: 6px; font-weight: 600; animation: slideIn 0.3s ease-out;">✅ Successfully sold ${quantity} share(s) of ${symbol} at $${data.price.toFixed(2)}${profitText}</div>`;
     document.getElementById('stock-symbol').value = '';
-    document.getElementById('stock-quantity').value = '';
+    document.getElementById('stock-quantity').value = '1';
     
     // Clear message after 5 seconds
     setTimeout(() => {
