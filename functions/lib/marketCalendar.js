@@ -94,6 +94,51 @@ function dailySnapshotDocId(date = new Date()) {
 }
 
 /**
+ * Build a Date that falls on the given America/New_York calendar day (approx. 12:00 ET).
+ */
+function dateOnEtDateKey(dateKey) {
+  const [y, m, d] = String(dateKey).split('-').map(Number);
+  // 17:00 UTC ≈ midday Eastern across EST/EDT
+  return new Date(Date.UTC(y, m - 1, d, 17, 0, 0));
+}
+
+/**
+ * Walk back calendar days in America/New_York until a US equity trading day is found.
+ * @param {Date} [from]
+ * @param {number} [maxLookback=14]
+ */
+function previousTradingDayDate(from = new Date(), maxLookback = 14) {
+  let key = tradingDateKeyEt(from);
+  let cursor = dateOnEtDateKey(key);
+  for (let i = 0; i < maxLookback; i++) {
+    cursor = new Date(cursor.getTime() - 24 * 60 * 60 * 1000);
+    if (isUsEquityTradingDay(cursor)) return cursor;
+  }
+  return cursor;
+}
+
+function previousTradingDayKey(from = new Date()) {
+  return tradingDateKeyEt(previousTradingDayDate(from));
+}
+
+/**
+ * Latest US equity session that is considered complete for EOD / delayed quotes.
+ * Regular session close is 16:00 America/New_York; before that on a trading day,
+ * the previous trading day is still the latest completed session.
+ */
+function latestCompletedSessionDateKey(now = new Date()) {
+  const parts = etParts(now);
+  if (isUsEquityTradingDay(now)) {
+    const minutes = parts.hour * 60 + parts.minute;
+    if (minutes >= 16 * 60) {
+      return parts.dateKey;
+    }
+    return previousTradingDayKey(now);
+  }
+  return previousTradingDayKey(now);
+}
+
+/**
  * Whether a cached quote timestamp is acceptable for end-of-day valuation.
  * Requires same America/New_York calendar date and age within maxAgeMs.
  */
@@ -106,6 +151,17 @@ function isQuoteFreshForDailyValuation(quoteTimestamp, now = new Date(), maxAgeM
   return tradingDateKeyEt(ts) === tradingDateKeyEt(now);
 }
 
+/**
+ * Quote acceptable for daily valuation when it belongs to the target session date
+ * (same ET calendar day as the valuation), regardless of wall-clock age within the day.
+ */
+function isQuoteForSession(quoteTimestamp, sessionDateKey) {
+  if (!quoteTimestamp || !sessionDateKey) return false;
+  const ts = quoteTimestamp instanceof Date ? quoteTimestamp : new Date(quoteTimestamp);
+  if (Number.isNaN(ts.getTime())) return false;
+  return tradingDateKeyEt(ts) === sessionDateKey;
+}
+
 module.exports = {
   US_MARKET_HOLIDAYS,
   etParts,
@@ -114,5 +170,9 @@ module.exports = {
   isUsEquityTradingDay,
   tradingDateKeyEt,
   dailySnapshotDocId,
-  isQuoteFreshForDailyValuation
+  previousTradingDayDate,
+  previousTradingDayKey,
+  latestCompletedSessionDateKey,
+  isQuoteFreshForDailyValuation,
+  isQuoteForSession
 };

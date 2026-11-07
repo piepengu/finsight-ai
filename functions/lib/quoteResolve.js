@@ -5,7 +5,7 @@
 
 'use strict';
 
-const { isQuoteFreshForDailyValuation } = require('./marketCalendar');
+const { isQuoteFreshForDailyValuation, tradingDateKeyEt } = require('./marketCalendar');
 
 /**
  * Extract usable quotes from Mag7 cache document data.
@@ -18,7 +18,14 @@ function quotesFromMag7Cache(mag7Data, now = new Date(), maxAgeMs) {
     : mag7Data.timestamp
       ? new Date(mag7Data.timestamp)
       : null;
-  if (!isQuoteFreshForDailyValuation(asOf, now, maxAgeMs)) return out;
+
+  // Prefer explicit sessionDate from the hybrid EOD cache; fall back to timestamp freshness.
+  const sessionOk =
+    mag7Data.sessionDate &&
+    asOf &&
+    mag7Data.sessionDate === tradingDateKeyEt(now);
+  if (!sessionOk && !isQuoteFreshForDailyValuation(asOf, now, maxAgeMs)) return out;
+  if (!asOf) return out;
 
   for (const s of mag7Data.stocks) {
     const symbol = String(s.symbol || '').toUpperCase();

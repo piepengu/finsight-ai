@@ -674,6 +674,13 @@ input:focus {
   color: #fff;
 }
 
+.magnificent7-asof {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
 .magnificent7-loading,
 .magnificent7-note {
   text-align: center;

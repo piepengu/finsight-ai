@@ -17,12 +17,34 @@ const {
   ALPHA_FREE_DAILY_LIMIT
 } = require('./lib/dailyValuation');
 const { quotesFromMag7Cache, quoteFromStockPriceCache } = require('./lib/quoteResolve');
+const {
+  createBudgetReserver,
+  CATEGORY_SCHEDULED_MAG7,
+  CATEGORY_ONDEMAND_MAG7,
+  CATEGORY_PORTFOLIO,
+  CATEGORY_INTERACTIVE,
+  CATEGORY_BRIEFING,
+  ALPHA_SCHEDULED_MAG7_MAX,
+  ALPHA_ONDEMAND_MAG7_MAX,
+  ALPHA_PORTFOLIO_NETWORK_MAX,
+  ALPHA_SOFT_DAILY_LIMIT,
+  expectedDailyUsageBands
+} = require('./lib/alphaBudget');
+const {
+  mag7Fingerprint,
+  missingMag7Symbols,
+  mag7CacheCoversSession,
+  shouldRefreshMag7OnDemand,
+  buildMarketDataLabels
+} = require('./lib/sessionQuotes');
+const { latestCompletedSessionDateKey, tradingDateKeyEt } = require('./lib/marketCalendar');
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
+const reserveAlphaBudget = createBudgetReserver(db, admin.firestore.FieldValue);
 
 // Define secrets for secure API key storage
 const geminiKey = defineSecret('GEMINI_KEY');
@@ -69,28 +91,35 @@ exports.getDailyBriefing = onRequest(
       return res.status(500).json({ error: 'API keys not configured' });
     }
 
-    // Fetch S&P 500 data from Alpha Vantage (using SPY ETF as proxy)
+    // Fetch S&P 500 data from Alpha Vantage (using SPY ETF as proxy) — shared daily budget
     let sp500Data = null;
     try {
-      const alphaResponse = await axios.get('https://www.alphavantage.co/query', {
-        params: {
-          function: 'GLOBAL_QUOTE',
-          symbol: 'SPY',
-          apikey: alphaKeyValue
+      const spyReserve = await reserveAlphaBudget.reserve(CATEGORY_BRIEFING, 1, new Date());
+      if (!spyReserve.ok) {
+        logger.warn('SPY fetch skipped — shared Alpha budget exhausted', { reason: spyReserve.reason });
+      } else {
+        const alphaResponse = await axios.get('https://www.alphavantage.co/query', {
+          params: {
+            function: 'GLOBAL_QUOTE',
+            symbol: 'SPY',
+            apikey: alphaKeyValue
+          }
+        });
+
+        if (alphaResponse.data['Global Quote'] && alphaResponse.data['Global Quote']['05. price']) {
+          const quote = alphaResponse.data['Global Quote'];
+          sp500Data = {
+            symbol: 'SPY',
+            price: parseFloat(quote['05. price']),
+            change: parseFloat(quote['09. change']),
+            changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
+            high: parseFloat(quote['03. high']),
+            low: parseFloat(quote['04. low']),
+            delayed: true,
+            realtime: false
+          };
+          logger.info('SP500 data fetched', { price: sp500Data.price });
         }
-      });
-      
-      if (alphaResponse.data['Global Quote'] && alphaResponse.data['Global Quote']['05. price']) {
-        const quote = alphaResponse.data['Global Quote'];
-        sp500Data = {
-          symbol: 'SPY',
-          price: parseFloat(quote['05. price']),
-          change: parseFloat(quote['09. change']),
-          changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
-          high: parseFloat(quote['03. high']),
-          low: parseFloat(quote['04. low'])
-        };
-        logger.info('SP500 data fetched', { price: sp500Data.price });
       }
     } catch (error) {
       logger.error('Alpha Vantage API error', { error: error.message });
@@ -287,8 +316,7 @@ const MAGNIFICENT_7 = [
 ];
 
 const MAG7_CACHE_KEY = 'magnificent7_stocks';
-const MAG7_FRESH_MS = 15 * 60 * 1000; // serve as fresh for 15 minutes
-const MAG7_STALE_OK_MS = 6 * 60 * 60 * 1000; // prefer complete stale up to 6 hours
+const MAG7_REFRESH_LOCK_KEY = 'mag7_refresh_lock';
 const ALPHA_CALL_GAP_MS = 13000; // free tier ~5 calls/minute
 
 function isAlphaVantageRateLimit(data) {
@@ -304,17 +332,83 @@ function isAlphaVantageRateLimit(data) {
   );
 }
 
+function mag7TimestampIso(cachedData) {
+  if (!cachedData?.timestamp) return null;
+  if (cachedData.timestamp.toDate) return cachedData.timestamp.toDate().toISOString();
+  return new Date(cachedData.timestamp).toISOString();
+}
+
 function mag7CachePayload(cachedData, extras = {}) {
   const stocks = cachedData.stocks || [];
+  const now = extras.now || new Date();
+  const sessionDate =
+    cachedData.sessionDate || latestCompletedSessionDateKey(now);
+  const asOf = mag7TimestampIso(cachedData) || new Date().toISOString();
+  const {
+    now: _nowIgnored,
+    source,
+    cached,
+    quotaExhausted,
+    stale,
+    error,
+    refreshSkipped,
+    rateLimited,
+    ...safeExtras
+  } = extras;
+  const labels = buildMarketDataLabels({
+    now,
+    sessionDateKey: sessionDate,
+    asOfIso: asOf,
+    cached: cached !== false,
+    partial: stocks.length < MAGNIFICENT_7.length,
+    quotaExhausted: !!quotaExhausted,
+    source: source || 'cache'
+  });
   return {
     stocks,
-    timestamp: cachedData.timestamp?.toDate
-      ? cachedData.timestamp.toDate().toISOString()
-      : cachedData.timestamp || new Date().toISOString(),
+    timestamp: asOf,
+    asOf,
+    sessionDate,
     partial: stocks.length < MAGNIFICENT_7.length,
-    cached: true,
-    ...extras
+    cached: cached !== false,
+    stale: !!stale,
+    error: error || undefined,
+    refreshSkipped: refreshSkipped || undefined,
+    rateLimited: rateLimited || undefined,
+    realtime: false,
+    delayed: true,
+    priceLabel: labels.summary,
+    freshness: labels.freshness,
+    ...safeExtras
   };
+}
+
+async function acquireMag7RefreshLock(owner, ttlMs = 120000) {
+  const ref = db.collection('cache').doc(MAG7_REFRESH_LOCK_KEY);
+  const nowMs = Date.now();
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : null;
+    if (data?.lockedUntil && data.lockedUntil > nowMs && data.owner !== owner) {
+      return { acquired: false, owner: data.owner };
+    }
+    tx.set(ref, {
+      owner,
+      lockedUntil: nowMs + ttlMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return { acquired: true, owner };
+  });
+}
+
+async function releaseMag7RefreshLock(owner) {
+  const ref = db.collection('cache').doc(MAG7_REFRESH_LOCK_KEY);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    if (snap.data().owner !== owner) return;
+    tx.delete(ref);
+  });
 }
 
 async function fetchMag7Quote(symbol, name, alphaKeyValue) {
@@ -351,37 +445,96 @@ async function fetchMag7Quote(symbol, name, alphaKeyValue) {
 }
 
 /**
- * Refresh Mag7 quotes with pacing. Merges into existing stocks and never
- * downgrades a more-complete cache with a worse partial set.
+ * Refresh Mag7 quotes with pacing + shared daily budget.
+ * Merges into existing stocks; never downgrades a more-complete cache.
+ * Dedupes by only fetching symbols still missing for the target session.
  */
 async function refreshMagnificent7Cache(alphaKeyValue, options = {}) {
-  const { maxFetches = 7, preferMissing = true } = options;
+  const {
+    maxFetches = ALPHA_SCHEDULED_MAG7_MAX,
+    preferMissing = true,
+    budgetCategory = CATEGORY_SCHEDULED_MAG7,
+    sessionDateKey = latestCompletedSessionDateKey(new Date()),
+    symbolsFilter = null,
+    now = new Date()
+  } = options;
+
   const cacheRef = db.collection('cache').doc(MAG7_CACHE_KEY);
   const cacheDoc = await cacheRef.get();
-  const previous = cacheDoc.exists ? (cacheDoc.data().stocks || []) : [];
+  const previousData = cacheDoc.exists ? cacheDoc.data() : {};
+  const previous = previousData.stocks || [];
   const bySymbol = new Map(previous.map((s) => [s.symbol, s]));
 
-  let symbolsToFetch = MAGNIFICENT_7.map((s) => s.symbol);
+  let symbolsToFetch = Array.isArray(symbolsFilter) && symbolsFilter.length
+    ? symbolsFilter.map((s) => String(s).toUpperCase())
+    : MAGNIFICENT_7.map((s) => s.symbol);
+
   if (preferMissing) {
-    const missing = symbolsToFetch.filter((sym) => !bySymbol.has(sym));
-    const present = symbolsToFetch.filter((sym) => bySymbol.has(sym));
-    symbolsToFetch = [...missing, ...present];
+    const missing = missingMag7Symbols(previous);
+    if (previousData.sessionDate === sessionDateKey && missing.length > 0) {
+      symbolsToFetch = missing;
+    } else if (previousData.sessionDate === sessionDateKey && missing.length === 0) {
+      return {
+        stocks: previous,
+        partial: false,
+        rateLimited: false,
+        fetchedCount: 0,
+        skipped: true,
+        reason: 'session_already_complete',
+        sessionDate: sessionDateKey
+      };
+    } else if (missing.length > 0 && previousData.sessionDate === sessionDateKey) {
+      symbolsToFetch = missing;
+    }
   }
-  symbolsToFetch = symbolsToFetch.slice(0, maxFetches);
+
+  symbolsToFetch = [...new Set(symbolsToFetch)].slice(0, Math.max(0, maxFetches));
+  if (symbolsToFetch.length === 0) {
+    return {
+      stocks: previous,
+      partial: previous.length < MAGNIFICENT_7.length,
+      rateLimited: false,
+      fetchedCount: 0,
+      skipped: true,
+      reason: 'nothing_to_fetch',
+      sessionDate: previousData.sessionDate || null
+    };
+  }
+
+  const reservation = await reserveAlphaBudget.reserve(budgetCategory, symbolsToFetch.length, now);
+  if (!reservation.ok || reservation.grant <= 0) {
+    logger.warn('Mag7 refresh blocked by shared API budget', {
+      category: budgetCategory,
+      reason: reservation.reason,
+      wanted: symbolsToFetch.length
+    });
+    return {
+      stocks: previous,
+      partial: previous.length < MAGNIFICENT_7.length,
+      rateLimited: false,
+      fetchedCount: 0,
+      skipped: true,
+      reason: reservation.reason || 'budget_exhausted',
+      quotaExhausted: true,
+      sessionDate: previousData.sessionDate || null
+    };
+  }
+
+  symbolsToFetch = symbolsToFetch.slice(0, reservation.grant);
 
   let rateLimited = false;
   let fetchedCount = 0;
 
   for (let i = 0; i < symbolsToFetch.length; i++) {
     const symbol = symbolsToFetch[i];
-    const meta = MAGNIFICENT_7.find((s) => s.symbol === symbol);
+    const meta = MAGNIFICENT_7.find((s) => s.symbol === symbol) || { symbol, name: symbol };
 
     try {
       const quote = await fetchMag7Quote(symbol, meta.name, alphaKeyValue);
       if (quote) {
         bySymbol.set(symbol, quote);
         fetchedCount += 1;
-        logger.info(`Mag7 fetched ${symbol}`, { price: quote.price });
+        logger.info(`Mag7 fetched ${symbol}`, { price: quote.price, sessionDateKey });
       } else {
         logger.warn(`Mag7 no quote for ${symbol}`);
       }
@@ -404,37 +557,61 @@ async function refreshMagnificent7Cache(alphaKeyValue, options = {}) {
     .filter(Boolean);
 
   const previousCount = previous.length;
+  const fingerprint = mag7Fingerprint(merged);
+  const complete = merged.length === MAGNIFICENT_7.length;
   const shouldWrite =
     merged.length > previousCount ||
-    (merged.length === MAGNIFICENT_7.length && fetchedCount > 0) ||
-    (previousCount === 0 && merged.length > 0);
+    (complete && fetchedCount > 0) ||
+    (previousCount === 0 && merged.length > 0) ||
+    fetchedCount > 0;
 
   if (shouldWrite && merged.length > 0) {
-    await cacheRef.set({
+    const payload = {
       stocks: merged,
-      partial: merged.length < MAGNIFICENT_7.length,
+      partial: !complete,
+      sessionDate: complete ? sessionDateKey : (previousData.sessionDate || null),
+      dataFingerprint: fingerprint,
+      lastFetchAttemptSession: sessionDateKey,
+      lastFetchAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastFetchFingerprint: fingerprint,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
-    });
+    };
+    // If still incomplete, keep prior sessionDate when it was better; mark attempt only
+    if (!complete) {
+      payload.sessionDate = previousData.sessionDate || null;
+    }
+    await cacheRef.set(payload, { merge: true });
     logger.info('Cached Magnificent 7 data', {
       count: merged.length,
       previousCount,
       fetchedCount,
-      rateLimited
+      rateLimited,
+      sessionDateKey,
+      complete
     });
-  } else if (previousCount > 0 && merged.length < previousCount) {
-    logger.info('Keeping previous Mag7 cache (more complete than refresh)', {
-      previousCount,
-      mergedCount: merged.length
-    });
+  } else {
+    await cacheRef.set({
+      lastFetchAttemptSession: sessionDateKey,
+      lastFetchAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastFetchFingerprint: fingerprint || previousData.dataFingerprint || null
+    }, { merge: true });
+    if (previousCount > 0 && merged.length < previousCount) {
+      logger.info('Keeping previous Mag7 cache (more complete than refresh)', {
+        previousCount,
+        mergedCount: merged.length
+      });
+    }
   }
 
   const finalDoc = await cacheRef.get();
-  const finalData = finalDoc.exists ? finalDoc.data() : { stocks: merged, timestamp: { toDate: () => new Date() } };
+  const finalData = finalDoc.exists ? finalDoc.data() : { stocks: merged };
   return {
     stocks: finalData.stocks || merged,
     partial: (finalData.stocks || merged).length < MAGNIFICENT_7.length,
     rateLimited,
-    fetchedCount
+    fetchedCount,
+    sessionDate: finalData.sessionDate || null,
+    quotaExhausted: false
   };
 }
 
@@ -448,82 +625,112 @@ exports.getMagnificent7 = onRequest(
   },
   async (req, res) => {
     logger.info('getMagnificent7 invoked');
+    const now = new Date();
+    const sessionDateKey = latestCompletedSessionDateKey(now);
 
     try {
       const cacheRef = db.collection('cache').doc(MAG7_CACHE_KEY);
       const cacheDoc = await cacheRef.get();
+      const cachedData = cacheDoc.exists ? cacheDoc.data() : null;
 
-      if (cacheDoc.exists) {
-        const cachedData = cacheDoc.data();
-        const stocks = cachedData.stocks || [];
-        const cacheAge = Date.now() - cachedData.timestamp.toMillis();
+      if (mag7CacheCoversSession(cachedData, sessionDateKey)) {
+        logger.info('Returning Mag7 cache for completed session', { sessionDateKey });
+        return res.json(mag7CachePayload(cachedData, { now, cached: true, source: 'cache' }));
+      }
 
-        if (cacheAge < MAG7_FRESH_MS && stocks.length > 0) {
-          logger.info('Returning fresh Mag7 cache', {
-            ageSec: Math.round(cacheAge / 1000),
-            count: stocks.length
-          });
-          return res.json(mag7CachePayload(cachedData));
-        }
-
-        // Prefer a complete (or better) stale set over a slow partial live fetch
-        if (
-          stocks.length === MAGNIFICENT_7.length &&
-          cacheAge < MAG7_STALE_OK_MS
-        ) {
-          logger.info('Returning complete stale Mag7 cache', {
-            ageMin: Math.round(cacheAge / 60000),
-            count: stocks.length
-          });
-          return res.json(mag7CachePayload(cachedData, { stale: true }));
+      const decision = shouldRefreshMag7OnDemand(cachedData, now);
+      if (!decision.refresh) {
+        if (cachedData?.stocks?.length) {
+          return res.json(mag7CachePayload(cachedData, {
+            now,
+            cached: true,
+            stale: true,
+            source: 'cache',
+            refreshSkipped: decision.reason
+          }));
         }
       }
 
       const alphaKeyValue = alphaKey.value();
-
       if (!alphaKeyValue) {
-        if (cacheDoc.exists && (cacheDoc.data().stocks || []).length > 0) {
-          logger.warn('No API key, returning stale Mag7 cache');
-          return res.json(mag7CachePayload(cacheDoc.data(), { stale: true }));
+        if (cachedData?.stocks?.length) {
+          return res.json(mag7CachePayload(cachedData, { now, stale: true, cached: true }));
         }
-        logger.error('Missing Alpha Vantage API key');
         return res.status(500).json({
           error: 'API key not configured. Please set ALPHA_KEY environment variable.'
         });
       }
 
-      // Fill missing symbols first (up to 5 calls / ~65s) to improve completeness
-      const previousCount = cacheDoc.exists ? (cacheDoc.data().stocks || []).length : 0;
-      const missingCount = MAGNIFICENT_7.length - previousCount;
-      const maxFetches = missingCount > 0 ? Math.min(5, Math.max(missingCount, 2)) : 3;
-
-      const refreshed = await refreshMagnificent7Cache(alphaKeyValue, {
-        maxFetches,
-        preferMissing: true
-      });
-
-      if (refreshed.stocks.length === 0) {
+      const lockOwner = `ondemand_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const lock = await acquireMag7RefreshLock(lockOwner);
+      if (!lock.acquired) {
+        // Another request is filling the cache — return best available
+        if (cachedData?.stocks?.length) {
+          return res.json(mag7CachePayload(cachedData, {
+            now,
+            cached: true,
+            stale: true,
+            refreshSkipped: 'lock_held'
+          }));
+        }
         return res.status(503).json({
-          error: 'Rate limit exceeded. Please try again in a minute.',
+          error: 'Market data refresh already in progress. Please try again shortly.',
           stocks: [],
-          timestamp: new Date().toISOString()
+          timestamp: now.toISOString(),
+          realtime: false,
+          delayed: true
         });
       }
 
-      return res.json({
-        stocks: refreshed.stocks,
-        timestamp: new Date().toISOString(),
-        partial: refreshed.partial,
-        cached: false,
-        rateLimited: refreshed.rateLimited || undefined
-      });
+      try {
+        // Re-read after lock (another visitor may have finished)
+        const latest = await cacheRef.get();
+        const latestData = latest.exists ? latest.data() : null;
+        if (mag7CacheCoversSession(latestData, sessionDateKey)) {
+          return res.json(mag7CachePayload(latestData, { now, cached: true, source: 'cache' }));
+        }
+
+        const missing = shouldRefreshMag7OnDemand(latestData, now).missingSymbols;
+        const refreshed = await refreshMagnificent7Cache(alphaKeyValue, {
+          maxFetches: Math.min(ALPHA_ONDEMAND_MAG7_MAX, missing.length || ALPHA_ONDEMAND_MAG7_MAX),
+          preferMissing: true,
+          budgetCategory: CATEGORY_ONDEMAND_MAG7,
+          sessionDateKey,
+          symbolsFilter: missing.length ? missing : null,
+          now
+        });
+
+        if (!refreshed.stocks.length) {
+          return res.status(503).json({
+            error: refreshed.quotaExhausted
+              ? 'Daily market-data budget reached. Please try again tomorrow.'
+              : 'Market data temporarily unavailable.',
+            stocks: [],
+            timestamp: now.toISOString(),
+            realtime: false,
+            delayed: true,
+            quotaExhausted: !!refreshed.quotaExhausted
+          });
+        }
+
+        const after = (await cacheRef.get()).data() || refreshed;
+        return res.json(mag7CachePayload(after, {
+          now,
+          cached: refreshed.fetchedCount === 0,
+          source: refreshed.fetchedCount > 0 ? 'network' : 'cache',
+          quotaExhausted: !!refreshed.quotaExhausted,
+          rateLimited: refreshed.rateLimited || undefined
+        }));
+      } finally {
+        await releaseMag7RefreshLock(lockOwner);
+      }
     } catch (error) {
       logger.error('getMagnificent7 error', { error: error.message, stack: error.stack });
 
       try {
         const fallback = await db.collection('cache').doc(MAG7_CACHE_KEY).get();
         if (fallback.exists && (fallback.data().stocks || []).length > 0) {
-          return res.json(mag7CachePayload(fallback.data(), { stale: true, error: true }));
+          return res.json(mag7CachePayload(fallback.data(), { now, stale: true, error: true, cached: true }));
         }
       } catch (_) {
         // ignore fallback errors
@@ -537,37 +744,11 @@ exports.getMagnificent7 = onRequest(
   }
 );
 
-// Pre-warm Mag7 cache so the banner is rarely cold (Blaze + Cloud Scheduler)
-// NOTE: Alpha Vantage free tier is ~25 calls/day. This job competes with daily MTM —
-// prefer cache reuse; consider lowering frequency if hitting daily limits.
-exports.refreshMagnificent7CacheJob = onSchedule(
-  {
-    schedule: 'every 20 minutes',
-    region: 'us-east4',
-    secrets: [alphaKey],
-    timeoutSeconds: 300,
-    retryCount: 0
-  },
-  async () => {
-    const alphaKeyValue = alphaKey.value();
-    if (!alphaKeyValue) {
-      logger.error('Mag7 schedule: ALPHA_KEY missing');
-      return;
-    }
-    logger.info('Mag7 scheduled refresh starting');
-    await refreshMagnificent7Cache(alphaKeyValue, {
-      maxFetches: 7,
-      preferMissing: true
-    });
-    logger.info('Mag7 scheduled refresh finished');
-  }
-);
-
 /**
- * Weekday 4:30 PM Eastern — record one complete daily MTM snapshot per paper-trading user.
- * Cache-first quotes (Mag7 + stock_price_*); limited network budget under free-tier constraints.
+ * Weekday 4:30 PM Eastern — Mag7 EOD refresh, then complete daily portfolio valuations.
+ * Replaces the former every-20-minute Mag7 job (free-tier safe).
  */
-exports.recordDailyPortfolioValuationsJob = onSchedule(
+exports.refreshMagnificent7CacheJob = onSchedule(
   {
     schedule: '30 16 * * 1-5',
     timeZone: 'America/New_York',
@@ -578,13 +759,112 @@ exports.recordDailyPortfolioValuationsJob = onSchedule(
     retryCount: 0
   },
   async () => {
+    const now = new Date();
+    await runEndOfDayMarketRefresh({
+      alphaKeyValue: alphaKey.value(),
+      now
+    });
+  }
+);
+
+/**
+ * Backup MTM pass at 4:45 PM Eastern — valuation only (no Mag7 refetch).
+ * Idempotent daily snapshot IDs; safe if the 4:30 job already wrote snapshots.
+ */
+exports.recordDailyPortfolioValuationsJob = onSchedule(
+  {
+    schedule: '45 16 * * 1-5',
+    timeZone: 'America/New_York',
+    region: 'us-east4',
+    secrets: [alphaKey],
+    timeoutSeconds: 540,
+    memory: '512MiB',
+    retryCount: 0
+  },
+  async () => {
     await runDailyPortfolioValuations({
       alphaKeyValue: alphaKey.value(),
-      networkBudget: DEFAULT_DAILY_JOB_NETWORK_BUDGET,
+      networkBudget: ALPHA_PORTFOLIO_NETWORK_MAX,
       now: new Date()
     });
   }
 );
+
+/**
+ * Coordinated EOD: trading-day gate → Mag7 under scheduled budget → portfolio MTM.
+ */
+async function runEndOfDayMarketRefresh({ alphaKeyValue, now = new Date() } = {}) {
+  const gate = evaluateDailyScheduleGate(now);
+  if (!gate.run) {
+    logger.info('End-of-day market refresh skipped', gate);
+    await db.collection('cache').doc(`eod_refresh_run_${gate.dateKey}`).set({
+      status: 'skipped',
+      reason: gate.reason,
+      finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+      usageBands: expectedDailyUsageBands()
+    }, { merge: true });
+    return { status: 'skipped', ...gate };
+  }
+
+  if (!alphaKeyValue) {
+    logger.error('End-of-day refresh: ALPHA_KEY missing');
+    return { status: 'error', reason: 'missing_alpha_key' };
+  }
+
+  const sessionDateKey = gate.dateKey;
+  logger.info('End-of-day Mag7 refresh starting', {
+    sessionDateKey,
+    softLimit: ALPHA_SOFT_DAILY_LIMIT,
+    bands: expectedDailyUsageBands()
+  });
+
+  const lockOwner = `scheduled_${sessionDateKey}`;
+  const lock = await acquireMag7RefreshLock(lockOwner, 300000);
+  let mag7Result = { fetchedCount: 0, skipped: !lock.acquired, reason: lock.acquired ? null : 'lock_held' };
+
+  try {
+    if (lock.acquired) {
+      mag7Result = await refreshMagnificent7Cache(alphaKeyValue, {
+        maxFetches: ALPHA_SCHEDULED_MAG7_MAX,
+        preferMissing: true,
+        budgetCategory: CATEGORY_SCHEDULED_MAG7,
+        sessionDateKey,
+        now
+      });
+    }
+  } finally {
+    if (lock.acquired) await releaseMag7RefreshLock(lockOwner);
+  }
+
+  const valuation = await runDailyPortfolioValuations({
+    alphaKeyValue,
+    networkBudget: ALPHA_PORTFOLIO_NETWORK_MAX,
+    now
+  });
+
+  const summary = {
+    status: 'completed',
+    sessionDateKey,
+    mag7: {
+      fetchedCount: mag7Result.fetchedCount || 0,
+      skipped: !!mag7Result.skipped,
+      reason: mag7Result.reason || null,
+      quotaExhausted: !!mag7Result.quotaExhausted
+    },
+    valuation
+  };
+
+  await db.collection('cache').doc(`eod_refresh_run_${sessionDateKey}`).set({
+    ...summary,
+    finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+    usageBands: expectedDailyUsageBands()
+  }, { merge: true });
+
+  logger.info('End-of-day market refresh finished', summary);
+  return summary;
+}
+
+exports.__runEndOfDayMarketRefresh = runEndOfDayMarketRefresh;
 
 /**
  * Shared daily valuation runner (also unit-testable via dependency injection in lib tests).
@@ -661,17 +941,34 @@ async function runDailyPortfolioValuations({
   let networkUsed = 0;
 
   if (alphaKeyValue && plan.toFetch.length > 0) {
-    for (let i = 0; i < plan.toFetch.length; i++) {
-      const symbol = plan.toFetch[i];
+    const reservation = await reserveAlphaBudget.reserve(
+      CATEGORY_PORTFOLIO,
+      plan.toFetch.length,
+      now
+    );
+    const toFetch = plan.toFetch.slice(0, reservation.grant || 0);
+    if (!reservation.ok || toFetch.length === 0) {
+      logger.warn('Daily valuation network fetches skipped (shared budget)', {
+        wanted: plan.toFetch.length,
+        reason: reservation.reason
+      });
+    }
+
+    for (let i = 0; i < toFetch.length; i++) {
+      const symbol = toFetch[i];
       try {
         if (i > 0) {
           await new Promise((r) => setTimeout(r, ALPHA_CALL_GAP_MS));
         }
-        const quote = await getStockQuote(symbol, alphaKeyValue);
+        // Bypass interactive budget — already reserved under portfolio category
+        const quote = await getStockQuote(symbol, alphaKeyValue, {
+          bypassBudget: true,
+          maxCacheAgeMs: 8 * 60 * 60 * 1000
+        });
         if (quote && Number.isFinite(quote.price) && quote.price > 0) {
           quotesBySymbol[symbol] = {
             price: quote.price,
-            asOf: new Date().toISOString(),
+            asOf: quote.asOf || new Date().toISOString(),
             source: 'network'
           };
           networkUsed += 1;
@@ -801,12 +1098,21 @@ function quoteFromCache(cachedData) {
   };
 }
 
-/** Full quote (price + daily change). Used by watchlist / stockPrice HTTP API. */
-async function getStockQuote(symbol, alphaKeyValue) {
+/**
+ * Full quote (price + daily change). Used by watchlist / stockPrice HTTP API.
+ * Respects shared daily Alpha budget unless bypassBudget is set (pre-reserved callers).
+ */
+async function getStockQuote(symbol, alphaKeyValue, options = {}) {
+  const {
+    bypassBudget = false,
+    maxCacheAgeMs = 5 * 60 * 1000,
+    budgetCategory = CATEGORY_INTERACTIVE,
+    now = new Date()
+  } = options;
+
   const cacheKey = `stock_price_${symbol}`;
   const cacheRef = db.collection('cache').doc(cacheKey);
   const cacheDoc = await cacheRef.get();
-  const fiveMinutes = 5 * 60 * 1000;
 
   if (cacheDoc.exists) {
     const cachedData = cacheDoc.data();
@@ -815,13 +1121,43 @@ async function getStockQuote(symbol, alphaKeyValue) {
       : Number.POSITIVE_INFINITY;
 
     // Only reuse cache when it includes change fields (older price-only entries are incomplete)
-    if (cacheAge < fiveMinutes && hasChangeFields(cachedData)) {
+    if (cacheAge < maxCacheAgeMs && hasChangeFields(cachedData)) {
       logger.info(`Using cached quote for ${symbol}`, {
         price: cachedData.price,
         changePercent: cachedData.changePercent,
         age: Math.round(cacheAge / 1000) + 's'
       });
-      return quoteFromCache(cachedData);
+      const cached = quoteFromCache(cachedData);
+      return {
+        ...cached,
+        asOf: cachedData.timestamp?.toDate
+          ? cachedData.timestamp.toDate().toISOString()
+          : null,
+        cached: true,
+        delayed: true,
+        realtime: false
+      };
+    }
+  }
+
+  if (!bypassBudget) {
+    const reservation = await reserveAlphaBudget.reserve(budgetCategory, 1, now);
+    if (!reservation.ok || reservation.grant < 1) {
+      if (cacheDoc.exists && hasChangeFields(cacheDoc.data())) {
+        const stale = quoteFromCache(cacheDoc.data());
+        logger.warn(`Budget exhausted, using stale quote cache for ${symbol}`);
+        return {
+          ...stale,
+          cached: true,
+          delayed: true,
+          realtime: false,
+          quotaExhausted: true,
+          asOf: cacheDoc.data().timestamp?.toDate
+            ? cacheDoc.data().timestamp.toDate().toISOString()
+            : null
+        };
+      }
+      throw new Error('Daily market-data budget reached. Please try again tomorrow.');
     }
   }
 
@@ -843,7 +1179,15 @@ async function getStockQuote(symbol, alphaKeyValue) {
           price: stale.price,
           changePercent: stale.changePercent
         });
-        return stale;
+        return {
+          ...stale,
+          cached: true,
+          delayed: true,
+          realtime: false,
+          asOf: cachedData.timestamp?.toDate
+            ? cachedData.timestamp.toDate().toISOString()
+            : null
+        };
       }
     }
     throw new Error('Alpha Vantage API rate limit exceeded. Please try again later.');
@@ -860,6 +1204,7 @@ async function getStockQuote(symbol, alphaKeyValue) {
   const previousClose = parseFloat(quote['08. previous close'] || '0');
   const high = parseFloat(quote['03. high'] || '0');
   const low = parseFloat(quote['04. low'] || '0');
+  const asOf = new Date().toISOString();
 
   const payload = {
     symbol,
@@ -869,6 +1214,7 @@ async function getStockQuote(symbol, alphaKeyValue) {
     previousClose: Number.isFinite(previousClose) ? previousClose : null,
     high: Number.isFinite(high) ? high : null,
     low: Number.isFinite(low) ? low : null,
+    sessionDate: tradingDateKeyEt(now),
     timestamp: admin.firestore.FieldValue.serverTimestamp()
   };
 
@@ -886,7 +1232,11 @@ async function getStockQuote(symbol, alphaKeyValue) {
     previousClose: payload.previousClose,
     high: payload.high,
     low: payload.low,
-    incomplete: false
+    incomplete: false,
+    asOf,
+    cached: false,
+    delayed: true,
+    realtime: false
   };
 }
 
@@ -894,6 +1244,18 @@ async function getStockQuote(symbol, alphaKeyValue) {
 async function getStockPrice(symbol, alphaKeyValue) {
   const quote = await getStockQuote(symbol, alphaKeyValue);
   return quote.price;
+}
+
+/** Reserve interactive Alpha capacity or throw a friendly quota error. */
+async function reserveInteractiveAlphaOrThrow(count = 1, now = new Date()) {
+  const reservation = await reserveAlphaBudget.reserve(CATEGORY_INTERACTIVE, count, now);
+  if (!reservation.ok || reservation.grant < count) {
+    const err = new Error('Daily market-data budget reached. Please try again tomorrow.');
+    err.quotaExhausted = true;
+    err.statusCode = 503;
+    throw err;
+  }
+  return reservation;
 }
 
 // Helper function to search for stock symbol by company name or symbol
@@ -907,6 +1269,7 @@ async function searchSymbol(input, alphaKeyValue, logger) {
   // If it looks like a symbol, try it directly first
   if (isLikelySymbol) {
     try {
+      await reserveInteractiveAlphaOrThrow(1);
       const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
         params: {
           function: 'GLOBAL_QUOTE',
@@ -962,6 +1325,7 @@ async function searchSymbol(input, alphaKeyValue, logger) {
   
   // Search by keywords (company name or symbol)
   try {
+    await reserveInteractiveAlphaOrThrow(1);
     const searchResponse = await axios.get('https://www.alphavantage.co/query', {
       params: {
         function: 'SYMBOL_SEARCH',
@@ -1687,6 +2051,7 @@ exports.explainCompany = onRequest(
       // Fetch company overview from Alpha Vantage
       let companyData = null;
       try {
+        await reserveInteractiveAlphaOrThrow(1);
         const overviewResponse = await axios.get('https://www.alphavantage.co/query', {
           params: {
             function: 'OVERVIEW',
@@ -1720,6 +2085,7 @@ exports.explainCompany = onRequest(
       // Fetch current price data as fallback (only if not already fetched by searchSymbol)
       if (!priceData) {
         try {
+          await reserveInteractiveAlphaOrThrow(1);
           const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
             params: {
               function: 'GLOBAL_QUOTE',
@@ -1878,6 +2244,7 @@ exports.getStockRecommendation = onRequest(
       // Only fetch quote if we don't already have it from searchSymbol
       if (!quoteData) {
         try {
+          await reserveInteractiveAlphaOrThrow(1);
           const quoteResponse = await axios.get('https://www.alphavantage.co/query', {
             params: {
               function: 'GLOBAL_QUOTE',
@@ -1969,6 +2336,7 @@ exports.getStockRecommendation = onRequest(
       // Fetch company overview for additional context
       let companyData = null;
       try {
+        await reserveInteractiveAlphaOrThrow(1);
         const overviewResponse = await axios.get('https://www.alphavantage.co/query', {
           params: {
             function: 'OVERVIEW',

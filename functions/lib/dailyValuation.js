@@ -14,13 +14,15 @@ const {
   isQuoteFreshForDailyValuation
 } = require('./marketCalendar');
 
-/**
- * Alpha Vantage free tier (verified 2025 docs): 25 requests/day, 5/min.
- * Mag7 refresh already competes for this budget — daily job must be cache-first.
- */
-const ALPHA_FREE_DAILY_LIMIT = 25;
+const {
+  ALPHA_PROVIDER_DAILY_LIMIT,
+  ALPHA_PORTFOLIO_NETWORK_MAX
+} = require('./alphaBudget');
+
+/** @deprecated use ALPHA_PROVIDER_DAILY_LIMIT — kept for existing tests */
+const ALPHA_FREE_DAILY_LIMIT = ALPHA_PROVIDER_DAILY_LIMIT;
 /** Soft cap for *new* network quote fetches inside one daily job run */
-const DEFAULT_DAILY_JOB_NETWORK_BUDGET = 5;
+const DEFAULT_DAILY_JOB_NETWORK_BUDGET = ALPHA_PORTFOLIO_NETWORK_MAX;
 
 /**
  * @param {{ cashBalance: number, holdings: Array<{ symbol: string, shares: number }>, quotesBySymbol: Record<string, { price: number, asOf: string|Date, stale?: boolean }> }} input

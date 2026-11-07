@@ -561,14 +561,16 @@ async function loadMagnificent7() {
       });
 
       stocksHTML += '</div>';
-      if (data.stale || data.cached) {
-        const label = data.stale
-          ? 'Showing recently cached prices (refreshing in background)'
-          : 'Showing cached data';
-        stocksHTML += `<div class="magnificent7-note">${label}</div>`;
-      } else if (data.partial) {
-        stocksHTML += '<div class="magnificent7-note">Showing available stocks (some may be rate-limited)</div>';
-      }
+      const asOfText = data.asOf
+        ? `As of ${new Date(data.asOf).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' })} ET`
+        : '';
+      const sessionText = data.sessionDate ? `Session ${escapeHtml(data.sessionDate)}` : '';
+      const metaBits = [sessionText, asOfText].filter(Boolean).join(' · ');
+      const statusLabel = data.priceLabel
+        || (data.partial
+          ? 'Partial Mag7 set — some symbols unavailable.'
+          : 'Delayed / end-of-day prices (not real-time).');
+      stocksHTML += `<div class="magnificent7-note">${escapeHtml(statusLabel)}${metaBits ? `<br><span class="magnificent7-asof">${escapeHtml(metaBits)}</span>` : ''}</div>`;
       setMag7TargetsHTML(stocksHTML);
     } else {
       setMag7TargetsHTML('<div class="magnificent7-loading">Stock data temporarily unavailable due to rate limits. Please refresh in a minute.</div>');
