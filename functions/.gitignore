@@ -1,5 +1,5 @@
 node_modules
-lib
 .eslintcache
 
-
+# Hand-written CommonJS helpers under lib/ are source (not a TypeScript build output).
+# Do not ignore lib/ — portfolio history and daily valuation modules live there.

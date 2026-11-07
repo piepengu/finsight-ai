@@ -9,6 +9,7 @@
     "dev:functions": "firebase emulators:start --only functions",
     "dev:all": "firebase emulators:start --only hosting,functions",
     "build": "echo \"No build step required for static site\"",
+    "test": "node --test tests/finsight-core.test.js tests/portfolio-history.test.js tests/daily-valuation.test.js",
     "deploy": "firebase deploy",
     "deploy:hosting": "firebase deploy --only hosting",
     "deploy:functions": "firebase deploy --only functions",

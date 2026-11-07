@@ -4,6 +4,19 @@ const { defineSecret } = require('firebase-functions/params');
 const logger = require('firebase-functions/logger');
 const axios = require('axios');
 const admin = require('firebase-admin');
+const { buildPortfolioHistoryResponse } = require('./lib/portfolioHistory');
+const {
+  evaluateDailyScheduleGate,
+  computeCompleteDailyValuation,
+  uniqueHoldingSymbols,
+  planNetworkFetches,
+  mergeQuoteMaps,
+  buildDailySnapshotPayload,
+  dailySnapshotDocId,
+  DEFAULT_DAILY_JOB_NETWORK_BUDGET,
+  ALPHA_FREE_DAILY_LIMIT
+} = require('./lib/dailyValuation');
+const { quotesFromMag7Cache, quoteFromStockPriceCache } = require('./lib/quoteResolve');
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -525,6 +538,8 @@ exports.getMagnificent7 = onRequest(
 );
 
 // Pre-warm Mag7 cache so the banner is rarely cold (Blaze + Cloud Scheduler)
+// NOTE: Alpha Vantage free tier is ~25 calls/day. This job competes with daily MTM —
+// prefer cache reuse; consider lowering frequency if hitting daily limits.
 exports.refreshMagnificent7CacheJob = onSchedule(
   {
     schedule: 'every 20 minutes',
@@ -547,6 +562,193 @@ exports.refreshMagnificent7CacheJob = onSchedule(
     logger.info('Mag7 scheduled refresh finished');
   }
 );
+
+/**
+ * Weekday 4:30 PM Eastern — record one complete daily MTM snapshot per paper-trading user.
+ * Cache-first quotes (Mag7 + stock_price_*); limited network budget under free-tier constraints.
+ */
+exports.recordDailyPortfolioValuationsJob = onSchedule(
+  {
+    schedule: '30 16 * * 1-5',
+    timeZone: 'America/New_York',
+    region: 'us-east4',
+    secrets: [alphaKey],
+    timeoutSeconds: 540,
+    memory: '512MiB',
+    retryCount: 0
+  },
+  async () => {
+    await runDailyPortfolioValuations({
+      alphaKeyValue: alphaKey.value(),
+      networkBudget: DEFAULT_DAILY_JOB_NETWORK_BUDGET,
+      now: new Date()
+    });
+  }
+);
+
+/**
+ * Shared daily valuation runner (also unit-testable via dependency injection in lib tests).
+ */
+async function runDailyPortfolioValuations({
+  alphaKeyValue,
+  networkBudget = DEFAULT_DAILY_JOB_NETWORK_BUDGET,
+  now = new Date(),
+  maxQuoteAgeMs = 8 * 60 * 60 * 1000
+} = {}) {
+  const gate = evaluateDailyScheduleGate(now);
+  if (!gate.run) {
+    logger.info('Daily valuation skipped', gate);
+    await db.collection('cache').doc(`daily_valuation_run_${gate.dateKey}`).set({
+      status: 'skipped',
+      reason: gate.reason,
+      finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+      alphaFreeDailyLimitHint: ALPHA_FREE_DAILY_LIMIT
+    }, { merge: true });
+    return { status: 'skipped', ...gate };
+  }
+
+  const dateKey = gate.dateKey;
+  const docId = dailySnapshotDocId(now);
+  logger.info('Daily valuation starting', {
+    dateKey,
+    docId,
+    networkBudget,
+    alphaFreeDailyLimitHint: ALPHA_FREE_DAILY_LIMIT
+  });
+
+  // Discover users via Auth (avoids collectionGroup index requirements), then keep those with accounts
+  const userIds = [];
+  let pageToken;
+  do {
+    const page = await admin.auth().listUsers(1000, pageToken);
+    for (const u of page.users) userIds.push(u.uid);
+    pageToken = page.pageToken;
+  } while (pageToken);
+
+  const users = [];
+  for (const userId of userIds) {
+    const accountDoc = await db.collection('users').doc(userId).collection('account').doc('balance').get();
+    if (!accountDoc.exists) continue; // not a paper-trading account yet
+    const cashBalance = Number(accountDoc.data().balance) || 0;
+    const portfolioSnap = await db.collection('users').doc(userId).collection('portfolio').get();
+    const holdings = [];
+    portfolioSnap.forEach((h) => {
+      holdings.push({ symbol: h.id, shares: Number(h.data().shares) || 0, ...h.data() });
+    });
+    users.push({ userId, cashBalance, holdings });
+  }
+
+  // Shared quote map across all users (one fetch per ticker)
+  let quotesBySymbol = {};
+  const mag7Doc = await db.collection('cache').doc(MAG7_CACHE_KEY).get();
+  if (mag7Doc.exists) {
+    quotesBySymbol = mergeQuoteMaps(
+      quotesBySymbol,
+      quotesFromMag7Cache(mag7Doc.data(), now, maxQuoteAgeMs)
+    );
+  }
+
+  const required = uniqueHoldingSymbols(users.map((u) => u.holdings));
+  for (const symbol of required) {
+    if (quotesBySymbol[symbol]) continue;
+    const cacheDoc = await db.collection('cache').doc(`stock_price_${symbol}`).get();
+    if (!cacheDoc.exists) continue;
+    const q = quoteFromStockPriceCache(symbol, cacheDoc.data(), now, maxQuoteAgeMs);
+    if (q) quotesBySymbol[symbol] = q;
+  }
+
+  const plan = planNetworkFetches(required, quotesBySymbol, networkBudget);
+  let networkUsed = 0;
+
+  if (alphaKeyValue && plan.toFetch.length > 0) {
+    for (let i = 0; i < plan.toFetch.length; i++) {
+      const symbol = plan.toFetch[i];
+      try {
+        if (i > 0) {
+          await new Promise((r) => setTimeout(r, ALPHA_CALL_GAP_MS));
+        }
+        const quote = await getStockQuote(symbol, alphaKeyValue);
+        if (quote && Number.isFinite(quote.price) && quote.price > 0) {
+          quotesBySymbol[symbol] = {
+            price: quote.price,
+            asOf: new Date().toISOString(),
+            source: 'network'
+          };
+          networkUsed += 1;
+        }
+      } catch (err) {
+        logger.warn('Daily valuation network quote failed', { symbol, error: err.message });
+      }
+    }
+  }
+
+  const summary = {
+    usersSeen: users.length,
+    written: 0,
+    skippedExisting: 0,
+    skippedIncomplete: 0,
+    skippedErrors: 0,
+    networkUsed,
+    requiredSymbols: required.length,
+    cachedSymbols: Object.keys(quotesBySymbol).length
+  };
+
+  for (const user of users) {
+    const snapRef = db.collection('users').doc(user.userId).collection('snapshots').doc(docId);
+    const existing = await snapRef.get();
+    if (existing.exists) {
+      summary.skippedExisting += 1;
+      continue;
+    }
+
+    const valuation = computeCompleteDailyValuation({
+      cashBalance: user.cashBalance,
+      holdings: user.holdings,
+      quotesBySymbol
+    });
+
+    if (!valuation.ok) {
+      summary.skippedIncomplete += 1;
+      logger.info('Daily valuation skipped for user (incomplete)', {
+        userId: user.userId,
+        reason: valuation.reason,
+        missingSymbols: valuation.missingSymbols || []
+      });
+      continue;
+    }
+
+    try {
+      const payload = buildDailySnapshotPayload({ valuation, now, quoteStatus: 'ok' });
+      await snapRef.create({
+        ...payload,
+        timestamp: admin.firestore.FieldValue.serverTimestamp()
+      });
+      summary.written += 1;
+    } catch (err) {
+      // create() fails if doc already exists (race) — treat as idempotent success
+      if (err.code === 6 || /already exists/i.test(String(err.message))) {
+        summary.skippedExisting += 1;
+      } else {
+        summary.skippedErrors += 1;
+        logger.error('Daily valuation write failed', { userId: user.userId, error: err.message });
+      }
+    }
+  }
+
+  await db.collection('cache').doc(`daily_valuation_run_${dateKey}`).set({
+    status: 'completed',
+    ...summary,
+    dateKey,
+    finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+    alphaFreeDailyLimitHint: ALPHA_FREE_DAILY_LIMIT
+  }, { merge: true });
+
+  logger.info('Daily valuation finished', summary);
+  return { status: 'completed', dateKey, ...summary };
+}
+
+// Exported for tests / manual ops scripts (not an HTTP endpoint)
+exports.__runDailyPortfolioValuations = runDailyPortfolioValuations;
 // Helper function to verify authentication
 async function verifyAuth(req) {
   const authHeader = req.headers.authorization;
@@ -850,6 +1052,7 @@ async function initializeAccount(userId) {
     // Create initial portfolio snapshot (no holdings yet, so portfolio value = cash balance)
     const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
     await snapshotRef.set({
+      kind: 'init',
       cashBalance: 10000.00,
       portfolioValue: 10000.00,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
@@ -913,9 +1116,10 @@ async function recordPortfolioSnapshot(userId, alphaKeyValue) {
       portfolioValue += holding.shares * price;
     }
     
-    // Record snapshot
+    // Trade-time observation (auto-id). Daily valuations use idempotent daily_YYYY-MM-DD ids.
     const snapshotRef = db.collection('users').doc(userId).collection('snapshots').doc();
     await snapshotRef.set({
+      kind: 'trade',
       cashBalance: cashBalance,
       portfolioValue: portfolioValue,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
@@ -1154,47 +1358,43 @@ exports.getPortfolioHistory = onRequest(
   },
   async (req, res) => {
     try {
-      // Verify authentication
       const userId = await verifyAuth(req);
-      
-      // Get snapshots, ordered by timestamp
+
       const snapshotsRef = db.collection('users').doc(userId).collection('snapshots');
-      const snapshotsQuery = snapshotsRef.orderBy('timestamp', 'desc').limit(100); // Last 100 snapshots
+      const snapshotsQuery = snapshotsRef.orderBy('timestamp', 'desc').limit(100);
       const snapshotsSnapshot = await snapshotsQuery.get();
-      
-      const snapshots = [];
-      snapshotsSnapshot.forEach((doc) => {
-        const data = doc.data();
+
+      const storedSnapshots = [];
+      snapshotsSnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
         const ts = data.timestamp?.toDate?.() || null;
         if (!ts) return;
-        snapshots.push({
+        storedSnapshots.push({
           timestamp: ts.toISOString(),
           portfolioValue: Number(data.portfolioValue) || 0,
-          cashBalance: Number(data.cashBalance) || 0
+          cashBalance: Number(data.cashBalance) || 0,
+          source: 'firestore',
+          kind: data.kind || 'stored'
         });
       });
 
-      // Chronological order (oldest → newest)
-      snapshots.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-      // Get current account balance and holdings for latest snapshot
       const accountRef = db.collection('users').doc(userId).collection('account').doc('balance');
       const accountDoc = await accountRef.get();
       const cashBalance = accountDoc.exists ? (accountDoc.data().balance || 10000) : 10000;
-      const accountCreatedAt = accountDoc.exists && accountDoc.data().createdAt?.toDate
-        ? accountDoc.data().createdAt.toDate()
-        : null;
 
       const portfolioRef = db.collection('users').doc(userId).collection('portfolio');
       const portfolioSnapshot = await portfolioRef.get();
-
       const holdings = [];
-      for (const doc of portfolioSnapshot.docs) {
-        holdings.push({ symbol: doc.id, ...doc.data() });
+      for (const docSnap of portfolioSnapshot.docs) {
+        holdings.push({ symbol: docSnap.id, ...docSnap.data() });
       }
 
-      // Live mark-to-market for the latest chart point
+      // Live mark-to-market for a separate "now" observation (does not rewrite stored history)
       let currentPortfolioValue = cashBalance;
+      let quoteStatus = 'ok';
+      let pricedHoldings = 0;
+      let failedHoldings = 0;
+
       if (holdings.length > 0) {
         try {
           const alphaKeyValue = alphaKey.value();
@@ -1206,104 +1406,60 @@ exports.getPortfolioHistory = onRequest(
               }
               const currentPrice = await getStockPrice(holding.symbol, alphaKeyValue);
               currentPortfolioValue += holding.shares * currentPrice;
+              pricedHoldings += 1;
             } catch (err) {
-              currentPortfolioValue += holding.shares * (holding.avgPrice || 0);
+              // Do not invent a market value from avgPrice for the live observation.
+              // Omit that holding from live MTM and mark quote quality.
+              failedHoldings += 1;
+              logger.warn('Live portfolio history quote failed; holding omitted from live point', {
+                symbol: holding.symbol,
+                error: err.message
+              });
             }
           }
-        } catch (err) {
-          logger.warn('Could not fetch current prices for portfolio history, using avgPrice', { error: err.message });
-          currentPortfolioValue = cashBalance;
-          for (const holding of holdings) {
-            currentPortfolioValue += holding.shares * (holding.avgPrice || 0);
+          if (failedHoldings > 0 && pricedHoldings > 0) quoteStatus = 'partial';
+          if (failedHoldings > 0 && pricedHoldings === 0) {
+            quoteStatus = 'unavailable';
+            currentPortfolioValue = cashBalance;
           }
+        } catch (err) {
+          logger.warn('Could not fetch current prices for live portfolio history point', { error: err.message });
+          quoteStatus = 'unavailable';
+          currentPortfolioValue = cashBalance;
         }
       }
 
-      // Guarantee a starting-capital anchor
-      if (snapshots.length === 0) {
-        const startTs = accountCreatedAt
-          ? accountCreatedAt.toISOString()
-          : new Date(Date.now() - 86400000).toISOString();
-        snapshots.push({
-          timestamp: startTs,
-          portfolioValue: 10000,
-          cashBalance: 10000
-        });
-      } else {
-        const first = snapshots[0];
-        // If first stored point isn't near starting capital, prepend account start / day-before
-        if (Math.abs(first.portfolioValue - 10000) > 1) {
-          const startTs = accountCreatedAt
-            ? accountCreatedAt.toISOString()
-            : new Date(new Date(first.timestamp).getTime() - 86400000).toISOString();
-          snapshots.unshift({
-            timestamp: startTs,
-            portfolioValue: 10000,
-            cashBalance: 10000
-          });
-        }
-      }
+      // Never plot an incomplete live mark as a full portfolio value
+      const liveComplete = holdings.length === 0 || quoteStatus === 'ok';
+      const livePoint = liveComplete
+        ? {
+            timestamp: new Date().toISOString(),
+            portfolioValue: currentPortfolioValue,
+            cashBalance,
+            quoteStatus
+          }
+        : null;
 
-      // Append / refresh live "now" point
-      const now = new Date().toISOString();
-      const lastSnapshot = snapshots[snapshots.length - 1];
-      const timeDiff = lastSnapshot
-        ? Math.abs(new Date(now).getTime() - new Date(lastSnapshot.timestamp).getTime())
-        : Infinity;
-
-      if (timeDiff > 30000) {
-        snapshots.push({
-          timestamp: now,
-          portfolioValue: currentPortfolioValue,
-          cashBalance: cashBalance
-        });
-      } else {
-        snapshots[snapshots.length - 1] = {
-          timestamp: now,
-          portfolioValue: currentPortfolioValue,
-          cashBalance: cashBalance
-        };
-      }
-
-      // Collapse near-duplicate consecutive points (same value within $0.50 and < 2 minutes apart)
-      const cleaned = [];
-      for (const point of snapshots) {
-        const prev = cleaned[cleaned.length - 1];
-        if (!prev) {
-          cleaned.push(point);
-          continue;
-        }
-        const dt = Math.abs(new Date(point.timestamp) - new Date(prev.timestamp));
-        const dv = Math.abs(point.portfolioValue - prev.portfolioValue);
-        if (dt < 2 * 60 * 1000 && dv < 0.5) {
-          cleaned[cleaned.length - 1] = point; // keep the newer of the near-dupes
-          continue;
-        }
-        // Also drop flat cost-basis noise: long stretches stuck at ~$10k before the live point
-        cleaned.push(point);
-      }
-
-      // Keep meaningful shape: first point, last point, and any point that moves >= $1 from previous kept point
-      const shaped = [];
-      for (let i = 0; i < cleaned.length; i++) {
-        const point = cleaned[i];
-        if (i === 0 || i === cleaned.length - 1) {
-          shaped.push(point);
-          continue;
-        }
-        const prev = shaped[shaped.length - 1];
-        if (Math.abs(point.portfolioValue - prev.portfolioValue) >= 1) {
-          shaped.push(point);
-        }
-      }
+      const { snapshots, meta } = buildPortfolioHistoryResponse({
+        storedSnapshots,
+        livePoint
+      });
 
       res.json({
         success: true,
-        snapshots: shaped,
-        currentPortfolioValue,
-        cashBalance
+        snapshots,
+        currentPortfolioValue: liveComplete ? currentPortfolioValue : null,
+        cashBalance,
+        meta: {
+          ...meta,
+          liveQuoteStatus: quoteStatus,
+          liveSkipped: !liveComplete,
+          liveSkipReason: liveComplete ? null : 'incomplete_quotes',
+          holdingsCount: holdings.length,
+          pricedHoldings,
+          failedHoldings
+        }
       });
-      
     } catch (error) {
       handleHttpError(res, error, 'getPortfolioHistory error');
     }

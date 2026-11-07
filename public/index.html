@@ -3,298 +3,404 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FinSight AI - Daily Market Briefing & Portfolio</title>
+  <title>FinSight AI - Market Briefing & Paper Trading</title>
   <meta name="description" content="Today's market in plain English — AI briefings and a virtual portfolio for young investors." />
   <meta property="og:title" content="FinSight AI — Today's market briefing" />
   <meta property="og:description" content="Plain-English market briefing for young investors. Educational only — not financial advice." />
-  <meta property="og:url" content="https://finsight-ai-jd.web.app/#briefing" />
+  <meta property="og:url" content="https://finsight-ai-jd.web.app/#dashboard" />
   <meta property="og:type" content="website" />
-  <link rel="stylesheet" href="/styles.css?v=no-bg-stamp-1" />
+  <link rel="stylesheet" href="/styles.css?v=chart-p1-1" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
-  <div class="container">
-    <div class="topbar">
-      <div id="auth-section">
-        <button type="button" id="login-btn">Sign in with Google</button>
-        <div id="user-info">
-          <span id="user-name"></span>
-          <button type="button" id="logout-btn" class="btn-ghost">Sign Out</button>
+  <div class="app-shell">
+    <header class="app-nav" role="banner">
+      <div class="app-nav-inner">
+        <a class="nav-brand" href="#dashboard" data-nav="dashboard">
+          <span class="nav-brand-mark" aria-hidden="true"><span></span></span>
+          <span class="nav-brand-name">FinSight AI</span>
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a class="nav-link" href="#dashboard" data-nav="dashboard">Dashboard</a>
+          <a class="nav-link" href="#markets" data-nav="markets">Markets</a>
+          <a class="nav-link" href="#portfolio" data-nav="portfolio">Portfolio</a>
+          <a class="nav-link" href="#trade" data-nav="trade">Trade</a>
+          <a class="nav-link" href="#research" data-nav="research">Research</a>
+          <a class="nav-link" href="#watchlist" data-nav="watchlist">Watchlist</a>
+        </nav>
+        <div class="nav-auth" id="auth-section">
+          <button type="button" id="login-btn" class="btn-primary" aria-label="Sign in with Google">
+            <span class="login-label-full">Sign in with Google</span>
+            <span class="login-label-short">Sign in</span>
+          </button>
+          <div id="user-info">
+            <span id="user-name"></span>
+            <button type="button" id="logout-btn" class="btn-ghost">Sign out</button>
+          </div>
         </div>
       </div>
-    </div>
-
-    <header class="brand-hero">
-      <div class="brand-mark" aria-hidden="true">
-        <div class="brand-mark-bars"><span></span><span></span><span></span></div>
-      </div>
-      <h1>FinSight AI</h1>
-      <p class="tagline">Your daily market briefing for young investors — learn, practice, and grow confidence.</p>
     </header>
 
-    <p class="edu-disclaimer" role="note">
-      <strong>Educational only — not financial advice.</strong>
-      Market data and AI summaries can be delayed, incomplete, or wrong. Do your own research before investing real money.
-    </p>
-
-    <div id="magnificent7-banner" class="magnificent7-banner">
-      <div class="magnificent7-header">
-        <h2>Top tech stocks</h2>
-        <p class="magnificent7-subtitle">Explore without signing in — Explain any ticker, or Practice after a free account.</p>
-      </div>
-      <div id="magnificent7-content" class="magnificent7-loading">Loading stock prices...</div>
-    </div>
-
-    <section id="briefing-section" class="briefing-section" aria-labelledby="briefing-heading">
-      <div class="briefing-header">
-        <div>
-          <h2 id="briefing-heading">Today's market briefing</h2>
-          <p class="briefing-subtitle">S&amp;P 500, crypto, and a plain-English AI summary — loads automatically</p>
+    <main class="app-main" id="app-main">
+      <!-- DASHBOARD -->
+      <section id="dashboard" class="app-section" data-section="dashboard" aria-labelledby="dashboard-heading">
+        <div class="page-intro">
+          <h1 id="dashboard-heading">Dashboard</h1>
+          <p>Your daily market briefing for young investors — learn, practice, and grow confidence.</p>
         </div>
-        <div class="briefing-actions">
-          <button type="button" id="fetch-btn" class="btn-refresh">Refresh</button>
+
+        <p class="edu-disclaimer" role="note">
+          <strong>Educational only — not financial advice.</strong>
+          Market data and AI summaries can be delayed, incomplete, or wrong. Do your own research before investing real money.
+        </p>
+
+        <div id="magnificent7-banner-dash" class="magnificent7-banner">
+          <div class="magnificent7-header">
+            <h2>Top tech stocks</h2>
+            <p class="magnificent7-subtitle">Live Mag7 quotes — open Markets for a focused view.</p>
+          </div>
+          <div class="magnificent7-content magnificent7-loading" data-mag7-target>Loading stock prices...</div>
         </div>
-      </div>
-      <div id="output">
-        <div class="loading"><span class="loading-pulse" aria-hidden="true"></span>Loading today's market briefing...</div>
-      </div>
-    </section>
 
-    <div id="signin-prompt" class="signin-prompt" role="status">
-      <div>
-        <h2>Sign in to unlock all features</h2>
-        <p>Use a free account for your virtual portfolio, practice trades, P&amp;L tracking, and a personal watchlist.</p>
-      </div>
-      <button type="button" id="signin-prompt-btn">Sign in with Google</button>
-    </div>
+        <section id="briefing-section" class="briefing-section" aria-labelledby="briefing-heading">
+          <div class="briefing-header">
+            <div>
+              <h2 id="briefing-heading" class="panel-title">Today's market briefing</h2>
+              <p class="briefing-subtitle">S&amp;P 500, crypto, and a plain-English AI summary — loads automatically</p>
+              <p id="briefing-updated" class="briefing-updated" hidden></p>
+            </div>
+            <div class="briefing-actions">
+              <button type="button" id="fetch-btn" class="btn-refresh">Refresh</button>
+            </div>
+          </div>
+          <div id="output">
+            <div class="loading"><span class="loading-pulse" aria-hidden="true"></span>Loading today's market briefing...</div>
+          </div>
+        </section>
 
-    <section id="learning-tips" class="learning-tips section" aria-labelledby="learning-tips-heading">
-      <div class="learning-tips-header">
-        <h2 id="learning-tips-heading">Learning tip</h2>
-        <span id="learning-tip-meta" class="learning-tips-meta"></span>
-      </div>
-      <h3 id="learning-tip-title" class="learning-tip-title"></h3>
-      <p id="learning-tip-body" class="learning-tip-body"></p>
-      <div class="learning-tips-actions">
-        <button type="button" id="learning-tip-next">Next tip</button>
-        <button type="button" id="learning-tip-prev" class="secondary">Previous</button>
-      </div>
-    </section>
-
-    <div id="portfolio-section" class="section" style="display: none;">
-      <h2 class="section-title">My portfolio</h2>
-      <p class="section-lead">Practice with virtual cash — no real money involved.</p>
-
-      <div class="portfolio-summary">
-        <div>
-          <div class="stat-label">Cash balance</div>
-          <div id="cash-balance" class="stat-value">$10,000.00</div>
-        </div>
-        <div>
-          <div class="stat-label">Portfolio value</div>
-          <div id="portfolio-value" class="stat-value">$10,000.00</div>
-        </div>
-        <div>
-          <div class="stat-label">Total P&amp;L</div>
-          <div id="total-pl" class="stat-value" style="color: var(--good);">$0.00</div>
-        </div>
-      </div>
-
-      <div class="trading-form">
-        <h3>Trade stocks</h3>
-        <div class="trade-grid">
+        <div id="dashboard-portfolio-strip" class="portfolio-summary dashboard-portfolio-strip" hidden>
           <div>
-            <label for="stock-symbol">Stock symbol</label>
-            <input type="text" id="stock-symbol" placeholder="e.g., AAPL" />
+            <div class="stat-label">Available cash</div>
+            <div id="dash-cash-balance" class="stat-value">$10,000.00</div>
           </div>
           <div>
-            <label for="stock-quantity">Quantity</label>
-            <input type="number" id="stock-quantity" value="1" min="1" step="1" />
+            <div class="stat-label">Portfolio value</div>
+            <div id="dash-portfolio-value" class="stat-value">$10,000.00</div>
           </div>
-          <button type="button" id="buy-btn" class="btn-buy">Buy</button>
-          <button type="button" id="sell-btn" class="btn-sell">Sell</button>
-        </div>
-        <div id="trading-message" style="margin-top: 1rem;"></div>
-        <p class="inline-tip"><strong>Tip:</strong> This is practice money only. Buying spends cash for shares; selling turns shares back into cash. P&amp;L shows whether those shares are worth more or less than you paid.</p>
-      </div>
-
-      <div class="holdings-section" style="margin-bottom: 1.5rem;">
-        <h3>Holdings</h3>
-        <div id="holdings-table" style="overflow-x: auto;">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th style="text-align: right;">Shares</th>
-                <th style="text-align: right;">Avg price</th>
-                <th style="text-align: right;">Current</th>
-                <th style="text-align: right;">Value</th>
-                <th style="text-align: right;">P&amp;L</th>
-              </tr>
-            </thead>
-            <tbody id="holdings-tbody">
-              <tr>
-                <td colspan="6" style="text-align: center; color: var(--muted);">No holdings yet. Start trading!</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="portfolio-chart-section" class="chart-section" style="margin-bottom: 1.5rem;">
-        <h3>Portfolio performance</h3>
-        <p class="section-lead" style="margin-top: -0.35rem;">Total account value over time (cash + holdings at market prices).</p>
-        <div class="chart-frame">
-          <canvas id="portfolio-chart"></canvas>
-        </div>
-      </div>
-
-      <div class="transaction-history-section">
-        <h3>Transaction history</h3>
-        <div id="transaction-history" style="overflow-x: auto; max-height: 400px; overflow-y: auto;">
-          <table class="data-table">
-            <thead style="position: sticky; top: 0; z-index: 10;">
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Symbol</th>
-                <th style="text-align: right;">Shares</th>
-                <th style="text-align: right;">Price</th>
-                <th style="text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody id="transaction-tbody">
-              <tr>
-                <td colspan="6" style="text-align: center; color: var(--muted);">No transactions yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <div id="watchlist-section" class="section" style="display: none;">
-      <h2 class="section-title">My watchlist</h2>
-      <p class="section-lead">Track stocks you are curious about — then explain what they do or practice a trade in one click.</p>
-
-      <div class="watchlist-form">
-        <h3>Add stock</h3>
-        <div class="feature-form-grid">
           <div>
-            <label for="watchlist-symbol">Stock symbol</label>
-            <input type="text" id="watchlist-symbol" placeholder="e.g., TSLA" />
+            <div class="stat-label">Total return</div>
+            <div id="dash-total-pl" class="stat-value">$0.00</div>
           </div>
-          <button type="button" id="add-watchlist-btn">Add</button>
+          <div class="dashboard-portfolio-cta">
+            <a href="#portfolio" data-nav="portfolio" class="btn-ghost">View portfolio</a>
+          </div>
         </div>
-        <div id="watchlist-message" style="margin-top: 1rem;"></div>
-      </div>
 
-      <div class="watchlist-list">
-        <h3>Watched stocks</h3>
-        <div id="watchlist-table" style="overflow-x: auto;">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th style="text-align: right;">Current price</th>
-                <th style="text-align: right;">Change</th>
-                <th style="text-align: center;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="watchlist-tbody">
-              <tr>
-                <td colspan="4" style="text-align: center; color: var(--muted);">No stocks in watchlist yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <div id="explain-section" class="section">
-      <h2 class="section-title">Explain It</h2>
-      <p class="section-lead">Learn what any company does in simple terms.</p>
-
-      <div class="feature-panel">
-        <div class="feature-form-grid">
+        <div id="signin-prompt" class="signin-prompt" role="status">
           <div>
-            <label for="explain-symbol">Stock symbol or company name</label>
-            <input type="text" id="explain-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" />
+            <h2>Sign in to unlock portfolio features</h2>
+            <p>Use a free account for your virtual portfolio, practice trades, P&amp;L tracking, and a personal watchlist.</p>
           </div>
-          <button type="button" id="explain-btn">Explain</button>
+          <button type="button" id="signin-prompt-btn">Sign in with Google</button>
         </div>
-        <div id="explain-message" style="margin-top: 1rem;"></div>
-      </div>
 
-      <div id="explain-result" class="explain-result">
-        <h3 id="explain-company-name"></h3>
-        <div id="explain-content" style="line-height: 1.65; margin-bottom: 0.85rem;"></div>
-        <div id="explain-price-info" style="font-size: 0.9rem; color: var(--muted);"></div>
-      </div>
-    </div>
-
-    <div id="recommendation-section" class="section">
-      <h2 class="section-title">Stock recommendation</h2>
-      <p class="section-lead">AI-generated buy / hold / sell ideas for learning — not personal advice.</p>
-
-      <p class="edu-disclaimer" role="note" style="margin-top: 0;">
-        Recommendations are for education only and are <strong>not</strong> personalized investment advice.
-      </p>
-
-      <div class="feature-panel">
-        <div class="feature-form-grid">
-          <div>
-            <label for="recommendation-symbol">Stock symbol or company name</label>
-            <input type="text" id="recommendation-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" />
+        <section id="learning-tips" class="learning-tips" aria-labelledby="learning-tips-heading">
+          <div class="learning-tips-header">
+            <h2 id="learning-tips-heading">Learning tip</h2>
+            <span id="learning-tip-meta" class="learning-tips-meta"></span>
           </div>
-          <button type="button" id="recommendation-btn" class="btn-buy">Get recommendation</button>
-        </div>
-        <div id="recommendation-message" style="margin-top: 1rem;"></div>
-      </div>
-
-      <div id="recommendation-result" class="recommendation-result">
-        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); gap: 1rem; flex-wrap: wrap;">
-          <div>
-            <h3 id="recommendation-company-name" style="margin: 0 0 0.4rem; font-family: var(--font-display);"></h3>
-            <div id="recommendation-price" style="font-size: 1.15rem; font-weight: 600;"></div>
+          <h3 id="learning-tip-title" class="learning-tip-title"></h3>
+          <p id="learning-tip-body" class="learning-tip-body"></p>
+          <div class="learning-tips-actions">
+            <button type="button" id="learning-tip-next">Next tip</button>
+            <button type="button" id="learning-tip-prev" class="secondary btn-ghost">Previous</button>
           </div>
-          <div id="recommendation-badge" style="padding: 0.45rem 0.9rem; border-radius: 8px; font-weight: 700;"></div>
-        </div>
+        </section>
+      </section>
 
-        <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap;">
-          <div style="flex: 1; min-width: 140px;">
-            <div class="stat-label">Confidence</div>
-            <div id="recommendation-confidence" style="font-weight: 600;"></div>
+      <!-- MARKETS -->
+      <section id="markets" class="app-section" data-section="markets" aria-labelledby="markets-heading">
+        <div class="page-intro">
+          <h1 id="markets-heading">Markets</h1>
+          <p>Top tech stocks with live quotes. Explain any ticker without signing in, or practice a trade after you create a free account.</p>
+        </div>
+        <div id="magnificent7-banner" class="magnificent7-banner">
+          <div class="magnificent7-header">
+            <h2>Top tech stocks</h2>
+            <p class="magnificent7-subtitle">Explore without signing in — Explain any ticker, or Practice after a free account.</p>
           </div>
-          <div style="flex: 1; min-width: 140px;">
-            <div class="stat-label">Risk level</div>
-            <div id="recommendation-risk" style="font-weight: 600;"></div>
+          <div id="magnificent7-content" class="magnificent7-content magnificent7-loading" data-mag7-target>Loading stock prices...</div>
+        </div>
+      </section>
+
+      <!-- PORTFOLIO -->
+      <section id="portfolio" class="app-section" data-section="portfolio" aria-labelledby="portfolio-heading">
+        <div id="portfolio-auth-gate" class="auth-gate">
+          <h2>Sign in to view your portfolio</h2>
+          <p>Paper-trading balances and holdings require a free Google account.</p>
+          <button type="button" class="btn-primary" data-signin-gate>Sign in with Google</button>
+        </div>
+        <div id="portfolio-section" class="auth-content" style="display: none;">
+          <div class="page-intro">
+            <h1 id="portfolio-heading">Portfolio</h1>
+            <p>Practice with virtual cash — no real money involved. <span class="sim-badge">Simulated</span></p>
           </div>
-          <div style="flex: 1; min-width: 140px;">
-            <div class="stat-label">Time horizon</div>
-            <div id="recommendation-horizon" style="font-weight: 600;"></div>
+
+          <div class="portfolio-summary">
+            <div>
+              <div class="stat-label">Available cash</div>
+              <div id="cash-balance" class="stat-value">$10,000.00</div>
+            </div>
+            <div>
+              <div class="stat-label">Total portfolio value</div>
+              <div id="portfolio-value" class="stat-value">$10,000.00</div>
+            </div>
+            <div>
+              <div class="stat-label">Total return</div>
+              <div id="total-pl" class="stat-value" style="color: var(--good);">$0.00</div>
+            </div>
+          </div>
+
+          <div class="holdings-section">
+            <h3>Holdings</h3>
+            <div id="holdings-table" style="overflow-x: auto;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th style="text-align: right;">Shares</th>
+                    <th style="text-align: right;">Avg price</th>
+                    <th style="text-align: right;">Current</th>
+                    <th style="text-align: right;">Value</th>
+                    <th style="text-align: right;">P&amp;L</th>
+                  </tr>
+                </thead>
+                <tbody id="holdings-tbody">
+                  <tr>
+                    <td colspan="6" class="empty-state">No holdings yet. Start paper trading to build a portfolio.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="portfolio-chart-section" class="chart-section">
+            <h3>Portfolio performance</h3>
+            <p class="section-lead" style="margin-top: -0.5rem;">Recorded portfolio observations over time (cash + holdings). Gaps between points were not measured.</p>
+            <div class="chart-ranges" id="chart-ranges" role="group" aria-label="Chart time range">
+              <button type="button" class="chart-range-btn" data-range="1W">1W</button>
+              <button type="button" class="chart-range-btn" data-range="1M">1M</button>
+              <button type="button" class="chart-range-btn" data-range="3M">3M</button>
+              <button type="button" class="chart-range-btn" data-range="ALL" aria-pressed="true">ALL</button>
+            </div>
+            <p id="chart-range-note" class="chart-range-note" hidden role="status"></p>
+            <div class="chart-frame">
+              <canvas id="portfolio-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TRADE -->
+      <section id="trade" class="app-section" data-section="trade" aria-labelledby="trade-heading">
+        <div id="trade-auth-gate" class="auth-gate">
+          <h2>Sign in for paper trading</h2>
+          <p>Buy and sell with simulated cash. This is not a real brokerage account.</p>
+          <button type="button" class="btn-primary" data-signin-gate>Sign in with Google</button>
+        </div>
+        <div id="trade-content" class="auth-content" style="display: none;">
+          <div class="page-intro">
+            <h1 id="trade-heading">Paper trading</h1>
+            <p>Simulated buy and sell orders using virtual cash. <span class="sim-badge">Simulated</span></p>
+          </div>
+
+          <div class="trading-form">
+            <h3>Place an order</h3>
+            <p class="trade-cash-line">Available cash: <strong id="trade-cash-balance">$10,000.00</strong></p>
+            <div class="trade-grid">
+              <div>
+                <label for="stock-symbol">Stock symbol</label>
+                <input type="text" id="stock-symbol" placeholder="e.g., AAPL" autocomplete="off" />
+              </div>
+              <div>
+                <label for="stock-quantity">Quantity</label>
+                <input type="number" id="stock-quantity" value="1" min="1" step="1" />
+              </div>
+              <button type="button" id="buy-btn" class="btn-buy">Buy</button>
+              <button type="button" id="sell-btn" class="btn-sell">Sell</button>
+            </div>
+            <div id="trading-message" style="margin-top: 1rem;"></div>
+            <p class="inline-tip"><strong>Tip:</strong> This is practice money only. Buying spends cash for shares; selling turns shares back into cash. P&amp;L shows whether those shares are worth more or less than you paid.</p>
+          </div>
+
+          <div class="transaction-history-section">
+            <h3>Transaction history</h3>
+            <div id="transaction-history" style="overflow-x: auto; max-height: 400px; overflow-y: auto;">
+              <table class="data-table">
+                <thead style="position: sticky; top: 0; z-index: 10;">
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Symbol</th>
+                    <th style="text-align: right;">Shares</th>
+                    <th style="text-align: right;">Price</th>
+                    <th style="text-align: right;">Total</th>
+                  </tr>
+                </thead>
+                <tbody id="transaction-tbody">
+                  <tr>
+                    <td colspan="6" class="empty-state">No transactions yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- RESEARCH -->
+      <section id="research" class="app-section" data-section="research" aria-labelledby="research-heading">
+        <div class="page-intro">
+          <h1 id="research-heading">AI research</h1>
+          <p>Look up a company in plain English, then review an educational buy / hold / sell idea. Not personal advice.</p>
+        </div>
+
+        <p class="edu-disclaimer" role="note">
+          Recommendations are for education only and are <strong>not</strong> personalized investment advice.
+        </p>
+
+        <div class="feature-panel">
+          <div class="feature-form-grid">
+            <div>
+              <label for="research-symbol">Stock symbol or company name</label>
+              <input type="text" id="research-symbol" placeholder="e.g., AAPL, Apple Inc, Microsoft" autocomplete="off" />
+              <!-- Kept for backward-compatible JS hooks -->
+              <input type="hidden" id="explain-symbol" />
+              <input type="hidden" id="recommendation-symbol" />
+            </div>
+            <button type="button" id="research-analyze-btn">Analyze</button>
+            <button type="button" id="explain-btn" hidden>Explain</button>
+            <button type="button" id="recommendation-btn" class="btn-buy" hidden>Get recommendation</button>
+          </div>
+          <div id="explain-message" style="margin-top: 1rem;"></div>
+          <div id="recommendation-message" style="margin-top: 0.5rem;"></div>
+        </div>
+
+        <div class="research-tabs" role="tablist" aria-label="Research views">
+          <button type="button" class="research-tab" role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview" data-research-tab="overview">Overview</button>
+          <button type="button" class="research-tab" role="tab" id="tab-recommendation" aria-selected="false" aria-controls="panel-recommendation" data-research-tab="recommendation">Recommendation</button>
+        </div>
+
+        <div id="panel-overview" class="research-panel is-active" role="tabpanel" aria-labelledby="tab-overview">
+          <div id="explain-section">
+            <div id="explain-result" class="explain-result" style="display: none;">
+              <h3 id="explain-company-name"></h3>
+              <div id="explain-content" style="line-height: 1.65; margin-bottom: 0.85rem;"></div>
+              <div id="explain-price-info" style="font-size: 0.9rem; color: var(--muted);"></div>
+              <div class="stock-chart-placeholder" role="note">
+                Per-stock price history charts are not available yet (no historical quote API). Quote and AI overview above use live endpoints.
+              </div>
+            </div>
           </div>
         </div>
 
-        <div style="margin-bottom: 1.15rem;">
-          <h4 style="margin: 0 0 0.55rem; font-size: 0.95rem;">Reasoning</h4>
-          <div id="recommendation-reasoning" style="line-height: 1.6; color: var(--ink-soft); background: #f3faf9; padding: 0.9rem 1rem; border-radius: 10px;"></div>
-        </div>
+        <div id="panel-recommendation" class="research-panel" role="tabpanel" aria-labelledby="tab-recommendation" hidden>
+          <div id="recommendation-section">
+            <div id="recommendation-result" class="recommendation-result" style="display: none;">
+              <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); gap: 1rem; flex-wrap: wrap;">
+                <div>
+                  <h3 id="recommendation-company-name" style="margin: 0 0 0.4rem; font-family: var(--font-display);"></h3>
+                  <div id="recommendation-price" style="font-size: 1.15rem; font-weight: 600;"></div>
+                </div>
+                <div id="recommendation-badge" style="padding: 0.45rem 0.9rem; border-radius: 8px; font-weight: 700;"></div>
+              </div>
 
-        <div style="margin-bottom: 1.15rem;">
-          <h4 style="margin: 0 0 0.55rem; font-size: 0.95rem;">Key points</h4>
-          <ul id="recommendation-keypoints" style="margin: 0; padding-left: 1.25rem; color: var(--ink-soft); line-height: 1.75;"></ul>
-        </div>
+              <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 140px;">
+                  <div class="stat-label">Confidence</div>
+                  <div id="recommendation-confidence" style="font-weight: 600;"></div>
+                </div>
+                <div style="flex: 1; min-width: 140px;">
+                  <div class="stat-label">Risk level</div>
+                  <div id="recommendation-risk" style="font-weight: 600;"></div>
+                </div>
+                <div style="flex: 1; min-width: 140px;">
+                  <div class="stat-label">Time horizon</div>
+                  <div id="recommendation-horizon" style="font-weight: 600;"></div>
+                </div>
+              </div>
 
-        <div class="edu-disclaimer" style="margin: 0;">
-          <strong>Disclaimer:</strong> <span id="recommendation-disclaimer"></span>
-        </div>
-      </div>
-    </div>
+              <div style="margin-bottom: 1.15rem;">
+                <h4 style="margin: 0 0 0.55rem; font-size: 0.95rem;">Reasoning</h4>
+                <div id="recommendation-reasoning" style="line-height: 1.6; color: var(--ink-soft); background: var(--surface-2); padding: 0.9rem 1rem; border-radius: 10px;"></div>
+              </div>
 
-    <footer class="site-footer">
-      FinSight AI is an educational demo. Prices may be cached or delayed. Virtual portfolio balances are simulated and have no real-world value.
-    </footer>
+              <div style="margin-bottom: 1.15rem;">
+                <h4 style="margin: 0 0 0.55rem; font-size: 0.95rem;">Key points</h4>
+                <ul id="recommendation-keypoints" style="margin: 0; padding-left: 1.25rem; color: var(--ink-soft); line-height: 1.75;"></ul>
+              </div>
+
+              <div class="edu-disclaimer" style="margin: 0;">
+                <strong>Disclaimer:</strong> <span id="recommendation-disclaimer"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- WATCHLIST -->
+      <section id="watchlist" class="app-section" data-section="watchlist" aria-labelledby="watchlist-heading">
+        <div id="watchlist-auth-gate" class="auth-gate">
+          <h2>Sign in to use your watchlist</h2>
+          <p>Track tickers you are curious about before you practice a trade.</p>
+          <button type="button" class="btn-primary" data-signin-gate>Sign in with Google</button>
+        </div>
+        <div id="watchlist-section" class="auth-content" style="display: none;">
+          <div class="page-intro">
+            <h1 id="watchlist-heading">Watchlist</h1>
+            <p>Track stocks you are curious about — then explain what they do or practice a trade in one click.</p>
+          </div>
+
+          <div class="watchlist-form">
+            <h3>Add stock</h3>
+            <div class="feature-form-grid">
+              <div>
+                <label for="watchlist-symbol">Stock symbol</label>
+                <input type="text" id="watchlist-symbol" placeholder="e.g., TSLA" autocomplete="off" />
+              </div>
+              <button type="button" id="add-watchlist-btn">Add</button>
+            </div>
+            <div id="watchlist-message" style="margin-top: 1rem;"></div>
+          </div>
+
+          <div class="watchlist-list">
+            <h3>Watched stocks</h3>
+            <div id="watchlist-table" style="overflow-x: auto;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th style="text-align: right;">Current price</th>
+                    <th style="text-align: right;">Change</th>
+                    <th style="text-align: center;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="watchlist-tbody">
+                  <tr>
+                    <td colspan="4" class="empty-state">No stocks in watchlist yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="site-footer">
+        FinSight AI is an educational demo. Prices may be cached or delayed. Virtual portfolio balances are simulated and have no real-world value.
+      </footer>
+    </main>
   </div>
 
   <script type="module">
@@ -323,6 +429,7 @@
     window.firebaseAuthFunctions = { signInWithPopup, signOut, onAuthStateChanged };
     window.firebaseFirestoreFunctions = { doc, getDoc, setDoc, addDoc, getDocs, collection, onSnapshot, query, where, orderBy, limit };
   </script>
-  <script src="/app.js?v=fix-trade-qty-1"></script>
+  <script src="/finsight-core.js?v=chart-p1-1"></script>
+  <script src="/app.js?v=chart-p1-1"></script>
 </body>
 </html>

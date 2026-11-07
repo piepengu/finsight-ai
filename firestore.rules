@@ -1,28 +1,54 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users can only read/write their own data
-    match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
     }
-    
-    // Snapshots subcollection - read-only for users, write only by functions
+
+    // Account balance — Cloud Functions (Admin SDK) write; clients read only
+    match /users/{userId}/account/{document=**} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    // Holdings — Functions write on buy/sell; clients read only
+    match /users/{userId}/portfolio/{document=**} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    // Watchlist — Functions write via add/remove APIs; clients read only
+    match /users/{userId}/watchlist/{document=**} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    // Transactions — Functions write on trade; client may create backfilled buy rows only
+    match /users/{userId}/transactions/{txId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.type == 'buy'
+        && request.resource.data.backfilled == true;
+      allow update, delete: if false;
+    }
+
+    // Portfolio history snapshots — Functions only (trade + daily jobs)
+    // IMPORTANT: must not be covered by a broader users/** write:allow
     match /users/{userId}/snapshots/{snapshotId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false; // Only functions can write (via admin SDK)
+      allow read: if isOwner(userId);
+      allow write: if false;
     }
-    
-    // Cache collection - read-only for authenticated users, write only by functions
+
+    // Shared quote / briefing cache — Functions write; authenticated read
     match /cache/{document=**} {
       allow read: if request.auth != null;
-      allow write: if false; // Only functions can write (via admin SDK)
+      allow write: if false;
     }
-    
-    // Deny all other access
+
+    // Deny everything else (including unknown user subcollections)
     match /{document=**} {
       allow read, write: if false;
     }
   }
 }
-
-
