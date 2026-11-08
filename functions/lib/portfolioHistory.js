@@ -5,6 +5,10 @@
 
 'use strict';
 
+/** Do not draw chart segments across gaps longer than this. */
+const MAX_CONNECTED_GAP_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Keep chronological order and drop only consecutive near-identical records
  * (same timestamp within 1s AND same cash + portfolio value).
@@ -104,17 +108,87 @@ function filterSnapshotsByRange(snapshots, range, rangeMsMap) {
 }
 
 /**
+ * Analyze consecutive gaps between ordered observations.
+ * Does not invent midpoints — only measures existing timestamps.
+ */
+function analyzeObservationGaps(snapshots, maxGapMs = MAX_CONNECTED_GAP_MS) {
+  const ordered = [...(snapshots || [])].sort(
+    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+  );
+  let maxGapMsFound = 0;
+  let longGapCount = 0;
+
+  for (let i = 1; i < ordered.length; i++) {
+    const prev = new Date(ordered[i - 1].timestamp).getTime();
+    const next = new Date(ordered[i].timestamp).getTime();
+    if (!Number.isFinite(prev) || !Number.isFinite(next)) continue;
+    const gap = Math.max(0, next - prev);
+    if (gap > maxGapMsFound) maxGapMsFound = gap;
+    if (gap > maxGapMs) longGapCount += 1;
+  }
+
+  return {
+    pointCount: ordered.length,
+    maxGapMs: maxGapMsFound,
+    maxGapDays: maxGapMsFound > 0 ? Math.round(maxGapMsFound / DAY_MS) : 0,
+    longGapCount,
+    hasLongGaps: longGapCount > 0,
+    maxConnectedGapMs: maxGapMs
+  };
+}
+
+/** True when a Chart.js segment between two parsed points should not be drawn. */
+function chartSegmentShouldBreak(fromMs, toMs, maxGapMs = MAX_CONNECTED_GAP_MS) {
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return false;
+  return Math.abs(toMs - fromMs) > maxGapMs;
+}
+
+function formatLongGapMessage(count, gapInfo) {
+  const days = Math.max(8, gapInfo.maxGapDays || Math.round(gapInfo.maxGapMs / DAY_MS));
+  if (gapInfo.maxGapMs >= 60 * DAY_MS) {
+    const months = Math.max(2, Math.round(gapInfo.maxGapMs / (30 * DAY_MS)));
+    return `${count} recorded observations. Longest unmeasured gap ~${months} months — lines do not connect across gaps over 7 days.`;
+  }
+  return `${count} recorded observations. Longest unmeasured gap ~${days} days — lines do not connect across gaps over 7 days.`;
+}
+
+/**
+ * Human-readable observation type for tooltips.
+ */
+function describeSnapshotKind(point = {}) {
+  if (point.source === 'live' || point.kind === 'live') {
+    return 'Live portfolio estimate';
+  }
+  switch (point.kind) {
+    case 'init':
+      return 'Account initialization';
+    case 'trade':
+      return 'Trade snapshot';
+    case 'daily':
+      return 'Daily valuation';
+    case 'stored':
+      return 'Recorded snapshot';
+    default:
+      return point.kind ? `Recorded snapshot (${point.kind})` : 'Recorded snapshot';
+  }
+}
+
+/**
  * Whether selected range has enough recorded observations for a meaningful view.
+ * Also flags long unmeasured gaps (including ALL mode).
  */
 function assessChartRange(snapshots, range, rangeMsMap) {
   const filtered = filterSnapshotsByRange(snapshots, range, rangeMsMap);
   const count = filtered.length;
+  const gaps = analyzeObservationGaps(filtered);
+
   if (count === 0) {
     return {
       ok: false,
       sparse: true,
       pointCount: 0,
       filtered,
+      gaps,
       message: 'No recorded portfolio snapshots in this range yet.'
     };
   }
@@ -124,6 +198,7 @@ function assessChartRange(snapshots, range, rangeMsMap) {
       sparse: true,
       pointCount: 1,
       filtered,
+      gaps,
       message:
         'Only one snapshot in this range. Lines between trades are not measured daily values — make another trade or wait for a daily valuation to see change over time.'
     };
@@ -134,13 +209,25 @@ function assessChartRange(snapshots, range, rangeMsMap) {
   const span = Math.max(0, last - first);
   const expected = rangeMsMap[range];
 
-  if (expected && span < expected * 0.35) {
-    const days = Math.max(1, Math.round(span / (24 * 60 * 60 * 1000)));
+  if (gaps.hasLongGaps) {
     return {
       ok: true,
       sparse: true,
       pointCount: count,
       filtered,
+      gaps,
+      message: formatLongGapMessage(count, gaps)
+    };
+  }
+
+  if (expected && span < expected * 0.35) {
+    const days = Math.max(1, Math.round(span / DAY_MS));
+    return {
+      ok: true,
+      sparse: true,
+      pointCount: count,
+      filtered,
+      gaps,
       message: `${count} recorded snapshots spanning about ${days} day(s). This is less history than the ${range} window — gaps are unmeasured, not proven flat performance.`
     };
   }
@@ -151,6 +238,7 @@ function assessChartRange(snapshots, range, rangeMsMap) {
       sparse: true,
       pointCount: count,
       filtered,
+      gaps,
       message: `${count} recorded snapshots. Chart connects observations only; values between points were not recorded.`
     };
   }
@@ -160,13 +248,20 @@ function assessChartRange(snapshots, range, rangeMsMap) {
     sparse: false,
     pointCount: count,
     filtered,
+    gaps,
     message: ''
   };
 }
 
 module.exports = {
+  MAX_CONNECTED_GAP_MS,
+  DAY_MS,
   dedupeIdenticalSnapshots,
   buildPortfolioHistoryResponse,
   filterSnapshotsByRange,
+  analyzeObservationGaps,
+  chartSegmentShouldBreak,
+  describeSnapshotKind,
+  formatLongGapMessage,
   assessChartRange
 };

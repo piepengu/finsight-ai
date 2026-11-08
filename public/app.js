@@ -31,8 +31,11 @@ const {
   formatCompanyHeading,
   waitUntil,
   DEFAULT_CHART_RANGE_MS,
+  MAX_CONNECTED_GAP_MS,
   filterSnapshotsByRange: coreFilterSnapshotsByRange,
-  assessChartRange
+  assessChartRange,
+  chartSegmentShouldBreak,
+  describeSnapshotKind
 } = window.FinSightCore;
 
 function getBriefingShareUrl() {
@@ -1312,7 +1315,8 @@ function renderPortfolioChart(snapshots, assessment) {
   }
 
   // Time scale: chronological spacing. No tension curves that invent midpoints.
-  // showLine connects recorded observations only — gaps are unmeasured.
+  // Segments longer than MAX_CONNECTED_GAP_MS (7 days) are not drawn.
+  const gapLimitMs = Number(MAX_CONNECTED_GAP_MS) || 7 * 24 * 60 * 60 * 1000;
   portfolioChart = new Chart(ctx, {
     type: 'line',
     data: {
@@ -1331,7 +1335,17 @@ function renderPortfolioChart(snapshots, assessment) {
           pointBackgroundColor: '#0f766e',
           pointBorderColor: '#ffffff',
           pointBorderWidth: 1,
-          spanGaps: false
+          spanGaps: false,
+          segment: {
+            borderColor: (ctx) => {
+              const from = ctx.p0?.parsed?.x;
+              const to = ctx.p1?.parsed?.x;
+              if (chartSegmentShouldBreak(from, to, gapLimitMs)) {
+                return 'rgba(0,0,0,0)';
+              }
+              return undefined;
+            }
+          }
         },
         {
           label: 'Starting capital (reference)',
@@ -1359,10 +1373,16 @@ function renderPortfolioChart(snapshots, assessment) {
         tooltip: {
           mode: 'index',
           intersect: false,
+          filter: function(item) {
+            // Starting-capital reference is always shown; portfolio points need a value
+            if (item.datasetIndex === 1) return true;
+            return item.parsed?.y != null && Number.isFinite(item.parsed.y);
+          },
           callbacks: {
             title: function(items) {
-              const raw = items[0]?.raw;
-              const ts = raw?.x ?? items[0]?.parsed?.x;
+              const portfolioItem = items.find((i) => i.datasetIndex === 0) || items[0];
+              const raw = portfolioItem?.raw;
+              const ts = raw?.x ?? portfolioItem?.parsed?.x;
               if (ts == null) return '';
               return formatChartLabel(new Date(ts), { includeTime: true });
             },
@@ -1372,17 +1392,17 @@ function renderPortfolioChart(snapshots, assessment) {
               if (context.datasetIndex === 1) {
                 return `${label}: ${formatMoney(startRef)}`;
               }
-              const meta = context.raw?.meta;
-              const source =
-                meta?.source === 'live'
-                  ? ' (live mark)'
-                  : meta?.kind
-                    ? ` (${meta.kind})`
-                    : '';
-              return `${label}: ${formatMoney(y)}${source}`;
+              if (y == null || !Number.isFinite(y)) return null;
+              const meta = context.raw?.meta || {};
+              const kindLabel =
+                typeof describeSnapshotKind === 'function'
+                  ? describeSnapshotKind(meta)
+                  : meta.kind || 'Recorded snapshot';
+              return `${kindLabel}: ${formatMoney(y)}`;
             },
             afterBody: function(items) {
-              const meta = items[0]?.raw?.meta;
+              const portfolioItem = items.find((i) => i.datasetIndex === 0);
+              const meta = portfolioItem?.raw?.meta;
               if (!meta) return [];
               const lines = [];
               if (meta.source === 'live' && meta.quoteStatus && meta.quoteStatus !== 'ok') {
