@@ -67,6 +67,13 @@
         }
       },
       {
+        "source": "/api/spyBenchmark",
+        "function": {
+          "functionId": "getSpyBenchmark",
+          "region": "us-east4"
+        }
+      },
+      {
         "source": "/api/addToWatchlist",
         "function": {
           "functionId": "addToWatchlist",

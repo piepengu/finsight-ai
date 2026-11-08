@@ -24,6 +24,7 @@ const {
   CATEGORY_PORTFOLIO,
   CATEGORY_INTERACTIVE,
   CATEGORY_BRIEFING,
+  CATEGORY_BENCHMARK,
   ALPHA_SCHEDULED_MAG7_MAX,
   ALPHA_ONDEMAND_MAG7_MAX,
   ALPHA_PORTFOLIO_NETWORK_MAX,
@@ -38,6 +39,14 @@ const {
   buildMarketDataLabels
 } = require('./lib/sessionQuotes');
 const { latestCompletedSessionDateKey, tradingDateKeyEt } = require('./lib/marketCalendar');
+const {
+  parseAlphaDailySeries,
+  buildBenchmarkComparison,
+  SPY_BENCHMARK_LABEL
+} = require('./lib/benchmarkCompare');
+
+const SPY_BENCHMARK_CACHE_KEY = 'spy_daily_benchmark';
+const SPY_BENCHMARK_LOCK_KEY = 'spy_benchmark_refresh_lock';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -842,6 +851,19 @@ async function runEndOfDayMarketRefresh({ alphaKeyValue, now = new Date() } = {}
     now
   });
 
+  // Refresh SPY compact daily history at most once per completed session (shared budget).
+  let spyBenchmark = { refreshed: false, skipped: true, reason: 'not_attempted' };
+  try {
+    spyBenchmark = await getOrRefreshSpyDailyBenchmark({
+      alphaKeyValue,
+      now,
+      allowNetwork: true
+    });
+  } catch (err) {
+    logger.warn('EOD SPY benchmark refresh failed', { error: err.message });
+    spyBenchmark = { refreshed: false, skipped: true, reason: err.message };
+  }
+
   const summary = {
     status: 'completed',
     sessionDateKey,
@@ -851,7 +873,14 @@ async function runEndOfDayMarketRefresh({ alphaKeyValue, now = new Date() } = {}
       reason: mag7Result.reason || null,
       quotaExhausted: !!mag7Result.quotaExhausted
     },
-    valuation
+    valuation,
+    spyBenchmark: {
+      refreshed: !!spyBenchmark.refreshed,
+      cached: !!spyBenchmark.cached,
+      barCount: Array.isArray(spyBenchmark.bars) ? spyBenchmark.bars.length : 0,
+      asOfSession: spyBenchmark.asOfSession || null,
+      reason: spyBenchmark.reason || null
+    }
   };
 
   await db.collection('cache').doc(`eod_refresh_run_${sessionDateKey}`).set({
@@ -865,6 +894,320 @@ async function runEndOfDayMarketRefresh({ alphaKeyValue, now = new Date() } = {}
 }
 
 exports.__runEndOfDayMarketRefresh = runEndOfDayMarketRefresh;
+
+function spyBenchmarkPayloadFromCache(cached, extras = {}) {
+  const bars = Array.isArray(cached?.bars) ? cached.bars : [];
+  return {
+    ok: bars.length > 0,
+    bars,
+    cached: true,
+    refreshed: false,
+    asOfSession: cached?.asOfSession || null,
+    fetchedAt: cached?.fetchedAtIso || null,
+    source: cached?.source || 'alpha_vantage_time_series_daily_compact',
+    label: SPY_BENCHMARK_LABEL,
+    ...extras
+  };
+}
+
+async function acquireSpyBenchmarkRefreshLock(owner, ttlMs = 120000) {
+  const ref = db.collection('cache').doc(SPY_BENCHMARK_LOCK_KEY);
+  const nowMs = Date.now();
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : null;
+    if (data?.lockedUntil && data.lockedUntil > nowMs && data.owner !== owner) {
+      return { acquired: false, owner: data.owner };
+    }
+    tx.set(ref, {
+      owner,
+      lockedUntil: nowMs + ttlMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return { acquired: true, owner };
+  });
+}
+
+async function releaseSpyBenchmarkRefreshLock(owner) {
+  const ref = db.collection('cache').doc(SPY_BENCHMARK_LOCK_KEY);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    if (snap.data().owner !== owner) return;
+    tx.delete(ref);
+  });
+}
+
+/**
+ * Read SPY TIME_SERIES_DAILY compact cache; refresh at most once per completed ET session.
+ * Uses shared Alpha budget (CATEGORY_BENCHMARK) + a refresh lock so concurrent visitors
+ * cannot stampede Alpha on cache misses / rate limits. Never fabricates bars.
+ */
+async function getOrRefreshSpyDailyBenchmark({
+  alphaKeyValue,
+  now = new Date(),
+  allowNetwork = true
+} = {}) {
+  const session = latestCompletedSessionDateKey(now);
+  const cacheRef = db.collection('cache').doc(SPY_BENCHMARK_CACHE_KEY);
+  const cacheDoc = await cacheRef.get();
+  const cached = cacheDoc.exists ? cacheDoc.data() : null;
+  const cachedBars = Array.isArray(cached?.bars) ? cached.bars : [];
+
+  if (cachedBars.length > 0 && cached.asOfSession === session) {
+    return spyBenchmarkPayloadFromCache(cached, { reason: 'session_cache_hit', ok: true });
+  }
+
+  // Failed/rate-limited attempt already recorded for this session — do not retry.
+  if (cached?.lastFetchAttemptSession === session && cached?.lastFetchFailed) {
+    if (cachedBars.length > 0) {
+      return spyBenchmarkPayloadFromCache(cached, {
+        reason: cached.lastFetchFailureReason || 'prior_session_attempt_failed',
+        stale: true,
+        ok: true
+      });
+    }
+    return {
+      ok: false,
+      bars: [],
+      cached: false,
+      refreshed: false,
+      reason: cached.lastFetchFailureReason || 'prior_session_attempt_failed',
+      label: SPY_BENCHMARK_LABEL
+    };
+  }
+
+  if (!allowNetwork || !alphaKeyValue) {
+    if (cachedBars.length > 0) {
+      return spyBenchmarkPayloadFromCache(cached, {
+        reason: alphaKeyValue ? 'stale_cache_no_network' : 'missing_alpha_key',
+        stale: true,
+        ok: true
+      });
+    }
+    return {
+      ok: false,
+      bars: [],
+      cached: false,
+      refreshed: false,
+      reason: alphaKeyValue ? 'no_cache' : 'missing_alpha_key',
+      label: SPY_BENCHMARK_LABEL
+    };
+  }
+
+  const lockOwner = `spy_${session}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const lock = await acquireSpyBenchmarkRefreshLock(lockOwner);
+  if (!lock.acquired) {
+    // Another request is refreshing — serve best available cache; do not start a second Alpha call.
+    if (cachedBars.length > 0) {
+      return spyBenchmarkPayloadFromCache(cached, {
+        reason: 'lock_held',
+        stale: cached.asOfSession !== session,
+        ok: true
+      });
+    }
+    return {
+      ok: false,
+      bars: [],
+      cached: false,
+      refreshed: false,
+      reason: 'refresh_in_progress',
+      label: SPY_BENCHMARK_LABEL
+    };
+  }
+
+  try {
+    // Re-check after lock — winner may have finished.
+    const latestDoc = await cacheRef.get();
+    const latest = latestDoc.exists ? latestDoc.data() : null;
+    const latestBars = Array.isArray(latest?.bars) ? latest.bars : [];
+    if (latestBars.length > 0 && latest.asOfSession === session) {
+      return spyBenchmarkPayloadFromCache(latest, { reason: 'session_cache_hit_after_lock', ok: true });
+    }
+    if (latest?.lastFetchAttemptSession === session && latest?.lastFetchFailed) {
+      if (latestBars.length > 0) {
+        return spyBenchmarkPayloadFromCache(latest, {
+          reason: latest.lastFetchFailureReason || 'prior_session_attempt_failed',
+          stale: true,
+          ok: true
+        });
+      }
+      return {
+        ok: false,
+        bars: [],
+        cached: false,
+        refreshed: false,
+        reason: latest.lastFetchFailureReason || 'prior_session_attempt_failed',
+        label: SPY_BENCHMARK_LABEL
+      };
+    }
+
+    const reservation = await reserveAlphaBudget.reserve(CATEGORY_BENCHMARK, 1, now);
+    if (!reservation.ok || reservation.grant < 1) {
+      if (latestBars.length > 0 || cachedBars.length > 0) {
+        return spyBenchmarkPayloadFromCache(latestBars.length ? latest : cached, {
+          reason: reservation.reason || 'budget_exhausted',
+          stale: true,
+          quotaExhausted: true,
+          ok: true
+        });
+      }
+      return {
+        ok: false,
+        bars: [],
+        cached: false,
+        refreshed: false,
+        reason: reservation.reason || 'budget_exhausted',
+        quotaExhausted: true,
+        label: SPY_BENCHMARK_LABEL
+      };
+    }
+
+    try {
+      const response = await axios.get('https://www.alphavantage.co/query', {
+        params: {
+          function: 'TIME_SERIES_DAILY',
+          symbol: 'SPY',
+          outputsize: 'compact',
+          apikey: alphaKeyValue
+        },
+        timeout: 20000
+      });
+
+      const parsed = parseAlphaDailySeries(response.data);
+      if (!parsed.ok || parsed.bars.length === 0) {
+        const failReason = parsed.reason || 'parse_failed';
+        logger.warn('SPY daily series parse failed', { reason: failReason });
+        await cacheRef.set(
+          {
+            lastFetchAttemptSession: session,
+            lastFetchFailed: true,
+            lastFetchFailureReason: String(failReason).slice(0, 240),
+            lastFetchAttemptAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+        if (latestBars.length > 0 || cachedBars.length > 0) {
+          return spyBenchmarkPayloadFromCache(latestBars.length ? latest : cached, {
+            reason: failReason,
+            stale: true,
+            ok: true
+          });
+        }
+        return {
+          ok: false,
+          bars: [],
+          cached: false,
+          refreshed: false,
+          reason: failReason,
+          label: SPY_BENCHMARK_LABEL
+        };
+      }
+
+      const fetchedAtIso = new Date().toISOString();
+      const payload = {
+        symbol: 'SPY',
+        bars: parsed.bars,
+        asOfSession: session,
+        fetchedAtIso,
+        source: 'alpha_vantage_time_series_daily_compact',
+        label: SPY_BENCHMARK_LABEL,
+        barCount: parsed.bars.length,
+        firstDate: parsed.bars[0].date,
+        lastDate: parsed.bars[parsed.bars.length - 1].date,
+        lastFetchAttemptSession: session,
+        lastFetchFailed: false,
+        lastFetchFailureReason: null,
+        timestamp: admin.firestore.FieldValue.serverTimestamp()
+      };
+      await cacheRef.set(payload, { merge: true });
+      logger.info('Cached SPY daily benchmark', {
+        bars: parsed.bars.length,
+        asOfSession: session,
+        firstDate: payload.firstDate,
+        lastDate: payload.lastDate
+      });
+
+      return {
+        ok: true,
+        bars: parsed.bars,
+        cached: false,
+        refreshed: true,
+        asOfSession: session,
+        fetchedAt: fetchedAtIso,
+        source: payload.source,
+        label: SPY_BENCHMARK_LABEL,
+        reason: 'network_refresh'
+      };
+    } catch (err) {
+      logger.error('SPY daily fetch error', { error: err.message });
+      await cacheRef.set(
+        {
+          lastFetchAttemptSession: session,
+          lastFetchFailed: true,
+          lastFetchFailureReason: String(err.message || 'fetch_error').slice(0, 240),
+          lastFetchAttemptAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      if (latestBars.length > 0 || cachedBars.length > 0) {
+        return spyBenchmarkPayloadFromCache(latestBars.length ? latest : cached, {
+          reason: err.message,
+          stale: true,
+          ok: true
+        });
+      }
+      return {
+        ok: false,
+        bars: [],
+        cached: false,
+        refreshed: false,
+        reason: err.message,
+        label: SPY_BENCHMARK_LABEL
+      };
+    }
+  } finally {
+    await releaseSpyBenchmarkRefreshLock(lockOwner);
+  }
+}
+
+exports.__getOrRefreshSpyDailyBenchmark = getOrRefreshSpyDailyBenchmark;
+
+/** Public/read SPY compact daily cache (refreshes at most once per session under budget). */
+exports.getSpyBenchmark = onRequest(
+  {
+    region: 'us-east4',
+    cors: true,
+    secrets: [alphaKey],
+    timeoutSeconds: 60
+  },
+  async (req, res) => {
+    try {
+      const result = await getOrRefreshSpyDailyBenchmark({
+        alphaKeyValue: alphaKey.value(),
+        now: new Date(),
+        allowNetwork: true
+      });
+      const status = result.ok ? 200 : result.quotaExhausted ? 503 : 503;
+      res.status(result.ok ? 200 : status).json({
+        success: !!result.ok,
+        symbol: 'SPY',
+        bars: result.bars || [],
+        cached: !!result.cached,
+        refreshed: !!result.refreshed,
+        stale: !!result.stale,
+        asOfSession: result.asOfSession || null,
+        fetchedAt: result.fetchedAt || null,
+        source: result.source || null,
+        label: result.label || SPY_BENCHMARK_LABEL,
+        reason: result.reason || null,
+        quotaExhausted: !!result.quotaExhausted
+      });
+    } catch (error) {
+      handleHttpError(res, error, 'getSpyBenchmark error');
+    }
+  }
+);
 
 /**
  * Shared daily valuation runner (also unit-testable via dependency injection in lib tests).
@@ -1809,11 +2152,45 @@ exports.getPortfolioHistory = onRequest(
         livePoint
       });
 
+      const wantBenchmark =
+        String(req.query.includeBenchmark || '').toLowerCase() === '1' ||
+        String(req.query.includeBenchmark || '').toLowerCase() === 'true';
+
+      let benchmark = null;
+      if (wantBenchmark) {
+        const spy = await getOrRefreshSpyDailyBenchmark({
+          alphaKeyValue: alphaKey.value(),
+          now: new Date(),
+          allowNetwork: true
+        });
+        const comparison = buildBenchmarkComparison({
+          portfolioSnapshots: snapshots,
+          spyBars: spy.bars || []
+        });
+        benchmark = {
+          ...comparison,
+          spyBars: spy.bars || [],
+          cache: {
+            ok: !!spy.ok,
+            cached: !!spy.cached,
+            refreshed: !!spy.refreshed,
+            stale: !!spy.stale,
+            asOfSession: spy.asOfSession || null,
+            fetchedAt: spy.fetchedAt || null,
+            source: spy.source || null,
+            barCount: Array.isArray(spy.bars) ? spy.bars.length : 0,
+            reason: spy.reason || null,
+            quotaExhausted: !!spy.quotaExhausted
+          }
+        };
+      }
+
       res.json({
         success: true,
         snapshots,
         currentPortfolioValue: liveComplete ? currentPortfolioValue : null,
         cashBalance,
+        benchmark,
         meta: {
           ...meta,
           liveQuoteStatus: quoteStatus,
@@ -1821,7 +2198,8 @@ exports.getPortfolioHistory = onRequest(
           liveSkipReason: liveComplete ? null : 'incomplete_quotes',
           holdingsCount: holdings.length,
           pricedHoldings,
-          failedHoldings
+          failedHoldings,
+          spyBenchmarkLabel: SPY_BENCHMARK_LABEL
         }
       });
     } catch (error) {

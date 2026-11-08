@@ -33,6 +33,8 @@ const CATEGORY_ONDEMAND_MAG7 = 'ondemand_mag7';
 const CATEGORY_PORTFOLIO = 'portfolio';
 const CATEGORY_INTERACTIVE = 'interactive';
 const CATEGORY_BRIEFING = 'briefing';
+/** SPY daily history refresh (compact) — uses soft remaining, not Mag7/portfolio pool */
+const CATEGORY_BENCHMARK = 'benchmark';
 
 const MARKET_DATA_CATEGORIES = new Set([
   CATEGORY_SCHEDULED_MAG7,
@@ -213,6 +215,7 @@ module.exports = {
   CATEGORY_PORTFOLIO,
   CATEGORY_INTERACTIVE,
   CATEGORY_BRIEFING,
+  CATEGORY_BENCHMARK,
   budgetDocId,
   emptyBudgetState,
   remainingForCategory,

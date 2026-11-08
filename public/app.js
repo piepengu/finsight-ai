@@ -32,11 +32,20 @@ const {
   waitUntil,
   DEFAULT_CHART_RANGE_MS,
   MAX_CONNECTED_GAP_MS,
+  SPY_BENCHMARK_LABEL,
   filterSnapshotsByRange: coreFilterSnapshotsByRange,
   assessChartRange,
   chartSegmentShouldBreak,
-  describeSnapshotKind
+  describeSnapshotKind,
+  buildBenchmarkComparison
 } = window.FinSightCore;
+
+function formatPercent(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${n.toFixed(digits)}%`;
+}
 
 function getBriefingShareUrl() {
   const url = new URL(window.location.href);
@@ -920,6 +929,13 @@ function resetPortfolioState() {
     portfolioChart = null;
   }
   portfolioChartSnapshots = [];
+  portfolioChartMeta = null;
+  portfolioSpyBars = [];
+  portfolioSpyCacheMeta = null;
+  portfolioChartView = 'value';
+  setBenchmarkSourceNote('');
+  setChartRangeNote('');
+  updateChartViewButtons();
 }
 
 function teardownUserSubscriptions() {
@@ -1135,6 +1151,11 @@ let portfolioChart = null;
 let portfolioChartSnapshots = [];
 let portfolioChartMeta = null;
 let portfolioChartRange = 'ALL';
+/** @type {'value' | 'compare'} */
+let portfolioChartView = 'value';
+/** Cached SPY compact bars from last history fetch */
+let portfolioSpyBars = [];
+let portfolioSpyCacheMeta = null;
 
 const CHART_RANGE_MS = DEFAULT_CHART_RANGE_MS || {
   '1W': 7 * 24 * 60 * 60 * 1000,
@@ -1177,8 +1198,41 @@ function setPortfolioChartRange(range) {
   const next = CHART_RANGE_MS[range] !== undefined ? range : 'ALL';
   portfolioChartRange = next;
   updateChartRangeButtons();
-  const assessment = assessChartRange(portfolioChartSnapshots, next, CHART_RANGE_MS);
-  renderPortfolioChart(assessment.filtered, assessment);
+  refreshPortfolioChartRender();
+}
+
+function setPortfolioChartView(view) {
+  portfolioChartView = view === 'compare' ? 'compare' : 'value';
+  updateChartViewButtons();
+  refreshPortfolioChartRender();
+}
+
+function updateChartViewButtons() {
+  document.querySelectorAll('.chart-view-btn').forEach((btn) => {
+    btn.setAttribute('aria-pressed', btn.dataset.chartView === portfolioChartView ? 'true' : 'false');
+  });
+}
+
+function setBenchmarkSourceNote(text) {
+  const el = document.getElementById('chart-benchmark-source');
+  if (!el) return;
+  if (!text) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.hidden = false;
+  el.textContent = text;
+}
+
+function refreshPortfolioChartRender() {
+  const assessment = assessChartRange(portfolioChartSnapshots, portfolioChartRange, CHART_RANGE_MS);
+  if (portfolioChartView === 'compare') {
+    renderPortfolioCompareChart(assessment.filtered, assessment);
+  } else {
+    setBenchmarkSourceNote('');
+    renderPortfolioChart(assessment.filtered, assessment);
+  }
 }
 
 function initChartRanges() {
@@ -1192,12 +1246,24 @@ function initChartRanges() {
   });
 }
 
+function initChartViewToggle() {
+  const group = document.getElementById('chart-view-toggle');
+  if (!group || group.dataset.bound) return;
+  group.dataset.bound = '1';
+  group.addEventListener('click', (e) => {
+    const btn = e.target.closest('.chart-view-btn');
+    if (!btn) return;
+    setPortfolioChartView(btn.dataset.chartView);
+  });
+  updateChartViewButtons();
+}
+
 async function loadPortfolioChart(userId) {
   try {
     const token = await window.firebaseAuth.currentUser?.getIdToken();
     if (!token) return;
 
-    const res = await fetch('/api/portfolioHistory', {
+    const res = await fetch('/api/portfolioHistory?includeBenchmark=1', {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -1210,11 +1276,15 @@ async function loadPortfolioChart(userId) {
 
     const data = await res.json();
     portfolioChartMeta = data.meta || null;
+    portfolioSpyBars = Array.isArray(data.benchmark?.spyBars) ? data.benchmark.spyBars : [];
+    portfolioSpyCacheMeta = data.benchmark?.cache || null;
 
     if (!data.success || !data.snapshots || data.snapshots.length === 0) {
       portfolioChartSnapshots = [];
+      portfolioSpyBars = [];
       updateChartRangeButtons();
-      setChartRangeNote('No recorded portfolio snapshots yet. Trades create history points; daily valuations will fill quiet days after Phase 2.', { sparse: true });
+      setChartRangeNote('No recorded portfolio snapshots yet. Trades create history points; daily valuations fill quiet trading days.', { sparse: true });
+      setBenchmarkSourceNote('');
       ensurePortfolioChartCanvas();
       if (portfolioChart) {
         try { portfolioChart.destroy(); } catch (_) { /* ignore */ }
@@ -1229,9 +1299,9 @@ async function loadPortfolioChart(userId) {
 
     portfolioChartSnapshots = data.snapshots;
     initChartRanges();
+    initChartViewToggle();
     updateChartRangeButtons();
-    const assessment = assessChartRange(portfolioChartSnapshots, portfolioChartRange, CHART_RANGE_MS);
-    renderPortfolioChart(assessment.filtered, assessment);
+    refreshPortfolioChartRender();
   } catch (error) {
     console.error('Error loading portfolio chart:', error);
     setChartRangeNote(`Error loading chart: ${error.message}`, { sparse: true });
@@ -1423,6 +1493,205 @@ function renderPortfolioChart(snapshots, assessment) {
             callback: function(value) {
               return formatMoney(value);
             }
+          },
+          grid: {
+            color: 'rgba(0, 0, 0, 0.04)'
+          }
+        },
+        x: {
+          type: 'time',
+          time: {
+            tooltipFormat: 'MMM d, yyyy HH:mm',
+            displayFormats: {
+              hour: 'MMM d Ha',
+              day: 'MMM d',
+              week: 'MMM d',
+              month: 'MMM yyyy'
+            }
+          },
+          adapters: {},
+          grid: {
+            display: false
+          },
+          ticks: {
+            maxRotation: 45,
+            autoSkip: true,
+            maxTicksLimit: multiDay ? 6 : 5
+          }
+        }
+      },
+      interaction: {
+        mode: 'nearest',
+        axis: 'x',
+        intersect: false
+      }
+    }
+  });
+}
+
+function renderPortfolioCompareChart(filteredSnapshots, assessment) {
+  const canvas = ensurePortfolioChartCanvas();
+  if (!canvas) return;
+
+  const comparison =
+    typeof buildBenchmarkComparison === 'function'
+      ? buildBenchmarkComparison({
+          portfolioSnapshots: filteredSnapshots || [],
+          spyBars: portfolioSpyBars || []
+        })
+      : { ok: false, reason: 'missing_helper', message: 'Comparison helper unavailable.', portfolioSeries: [], spySeries: [] };
+
+  const notes = [];
+  if (assessment?.message) notes.push(assessment.message);
+  if (comparison.message) notes.push(comparison.message);
+  setChartRangeNote(notes.filter(Boolean).join(' ') || '', {
+    sparse: !!(assessment?.sparse || !comparison.ok)
+  });
+
+  const cache = portfolioSpyCacheMeta || {};
+  const label = comparison.meta?.spyLabel || SPY_BENCHMARK_LABEL || 'SPY (S&P 500 ETF proxy)';
+  const asOf = cache.fetchedAt || cache.asOfSession || comparison.meta?.spyLastDate || null;
+  const asOfText = asOf
+    ? `Last updated: ${typeof asOf === 'string' && asOf.includes('T')
+      ? new Date(asOf).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' }) + ' ET'
+      : asOf}`
+    : 'Last updated: unavailable';
+  setBenchmarkSourceNote(`Benchmark: ${label}. Source: Alpha Vantage TIME_SERIES_DAILY (compact). ${asOfText}.`);
+
+  if (!comparison.ok || !comparison.portfolioSeries?.length) {
+    if (portfolioChart) {
+      try { portfolioChart.destroy(); } catch (_) { /* ignore */ }
+      portfolioChart = null;
+    }
+    canvas.parentElement.insertAdjacentHTML(
+      'afterbegin',
+      `<p class="empty-state">${escapeHtml(comparison.message || 'Comparison unavailable for this range.')}</p>`
+    );
+    canvas.hidden = true;
+    return;
+  }
+
+  const portfolioSeries = comparison.portfolioSeries;
+  const spySeries = comparison.spySeries || [];
+  const gapLimitMs = Number(MAX_CONNECTED_GAP_MS) || 7 * 24 * 60 * 60 * 1000;
+  const spanMs =
+    portfolioSeries.length > 1
+      ? portfolioSeries[portfolioSeries.length - 1].x - portfolioSeries[0].x
+      : 0;
+  const multiDay = spanMs > 36 * 60 * 60 * 1000;
+
+  if (portfolioChart) {
+    portfolioChart.destroy();
+  }
+
+  portfolioChart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'My portfolio return',
+          data: portfolioSeries,
+          borderColor: '#0f766e',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          fill: false,
+          tension: 0,
+          showLine: portfolioSeries.length >= 2,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          pointBackgroundColor: '#0f766e',
+          pointBorderColor: '#ffffff',
+          pointBorderWidth: 1,
+          spanGaps: false,
+          order: 1,
+          segment: {
+            borderColor: (ctx) => {
+              const from = ctx.p0?.parsed?.x;
+              const to = ctx.p1?.parsed?.x;
+              if (chartSegmentShouldBreak(from, to, gapLimitMs)) return 'rgba(0,0,0,0)';
+              return undefined;
+            }
+          }
+        },
+        {
+          label: 'SPY (daily closes)',
+          data: spySeries,
+          borderColor: '#64748b',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          fill: false,
+          tension: 0,
+          showLine: spySeries.length >= 2,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointHitRadius: 6,
+          spanGaps: false,
+          order: 2
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      parsing: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          callbacks: {
+            title: function(items) {
+              const ts = items[0]?.parsed?.x ?? items[0]?.raw?.x;
+              if (ts == null) return '';
+              return formatChartLabel(new Date(ts), { includeTime: true });
+            },
+            label: function(context) {
+              const y = context.parsed?.y;
+              if (y == null || !Number.isFinite(y)) return null;
+              if (context.datasetIndex === 1) {
+                const date = context.raw?.meta?.date;
+                return `SPY daily${date ? ` (${date})` : ''}: ${formatPercent(y)}`;
+              }
+              const meta = context.raw?.meta || {};
+              const kindLabel =
+                typeof describeSnapshotKind === 'function'
+                  ? describeSnapshotKind(meta)
+                  : 'Portfolio';
+              return `${kindLabel}: ${formatPercent(y)}`;
+            },
+            afterBody: function(items) {
+              const portfolioItem = items.find((i) => i.datasetIndex === 0);
+              const meta = portfolioItem?.raw?.meta;
+              if (!meta) return [];
+              const lines = [];
+              if (meta.spyAsOfDate != null && meta.spyClose != null) {
+                lines.push(`Aligned SPY close (${meta.spyAsOfDate}): ${formatMoney(meta.spyClose)}`);
+              }
+              if (meta.portfolioValue != null) {
+                lines.push(`Portfolio value: ${formatMoney(meta.portfolioValue)}`);
+              }
+              return lines;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: false,
+          ticks: {
+            callback: function(value) {
+              return formatPercent(value, 1);
+            }
+          },
+          title: {
+            display: true,
+            text: 'Return since comparison start',
+            color: '#64748b',
+            font: { size: 11 }
           },
           grid: {
             color: 'rgba(0, 0, 0, 0.04)'

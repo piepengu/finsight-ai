@@ -188,6 +188,10 @@
           <div id="portfolio-chart-section" class="chart-section">
             <h3>Portfolio performance</h3>
             <p class="section-lead" style="margin-top: -0.5rem;">Recorded portfolio observations over time (cash + holdings). Gaps between points were not measured.</p>
+            <div class="chart-view-toggle" id="chart-view-toggle" role="group" aria-label="Chart view">
+              <button type="button" class="chart-view-btn" data-chart-view="value" aria-pressed="true">Portfolio Value ($)</button>
+              <button type="button" class="chart-view-btn" data-chart-view="compare" aria-pressed="false">Compare to S&amp;P 500 (%)</button>
+            </div>
             <div class="chart-ranges" id="chart-ranges" role="group" aria-label="Chart time range">
               <button type="button" class="chart-range-btn" data-range="1W">1W</button>
               <button type="button" class="chart-range-btn" data-range="1M">1M</button>
@@ -195,6 +199,7 @@
               <button type="button" class="chart-range-btn" data-range="ALL" aria-pressed="true">ALL</button>
             </div>
             <p id="chart-range-note" class="chart-range-note" hidden role="status"></p>
+            <p id="chart-benchmark-source" class="chart-benchmark-source" hidden></p>
             <div class="chart-frame">
               <canvas id="portfolio-chart"></canvas>
             </div>

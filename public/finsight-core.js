@@ -253,6 +253,219 @@
     return { ok: true, sparse: false, pointCount: count, filtered, gaps, message: '' };
   }
 
+  const SPY_BENCHMARK_LABEL =
+    'SPY (S&P 500 ETF proxy) — unadjusted closing prices, not the exact S&P 500 total return';
+
+  function etPartsCore(date) {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    });
+    const parts = Object.fromEntries(
+      fmt.formatToParts(date).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value])
+    );
+    return {
+      dateKey: `${parts.year}-${parts.month}-${parts.day}`,
+      weekday: parts.weekday,
+      hour: Number(parts.hour),
+      minute: Number(parts.minute)
+    };
+  }
+
+  function tradingDateKeyEtCore(date) {
+    return etPartsCore(date).dateKey;
+  }
+
+  function previousTradingDayKeyCore(from) {
+    let cursor = new Date(from.getTime());
+    for (let i = 0; i < 14; i++) {
+      cursor = new Date(cursor.getTime() - DAY_MS);
+      const p = etPartsCore(cursor);
+      if (p.weekday !== 'Sat' && p.weekday !== 'Sun') return p.dateKey;
+    }
+    return etPartsCore(cursor).dateKey;
+  }
+
+  function spyAsOfDateKeyForObservation(observationTs) {
+    const when = observationTs instanceof Date ? observationTs : new Date(observationTs);
+    if (Number.isNaN(when.getTime())) return null;
+    const parts = etPartsCore(when);
+    const isWeekend = parts.weekday === 'Sat' || parts.weekday === 'Sun';
+    if (!isWeekend) {
+      const minutes = parts.hour * 60 + parts.minute;
+      if (minutes < 16 * 60) return previousTradingDayKeyCore(when);
+      return parts.dateKey;
+    }
+    return previousTradingDayKeyCore(when);
+  }
+
+  function indexSpyBars(bars) {
+    const byDate = new Map();
+    for (const b of bars || []) {
+      if (b?.date && Number.isFinite(Number(b.close))) byDate.set(b.date, Number(b.close));
+    }
+    const dates = [...byDate.keys()].sort();
+    return { byDate, dates, firstDate: dates[0] || null, lastDate: dates[dates.length - 1] || null };
+  }
+
+  function findSpyCloseOnOrBefore(dateKey, spyIndex, maxLookback) {
+    if (!dateKey || !spyIndex?.byDate) return null;
+    let key = dateKey;
+    const limit = maxLookback == null ? 10 : maxLookback;
+    for (let i = 0; i < limit; i++) {
+      if (spyIndex.byDate.has(key)) return { date: key, close: spyIndex.byDate.get(key) };
+      const [y, m, d] = key.split('-').map(Number);
+      const cursor = new Date(Date.UTC(y, m - 1, d, 17, 0, 0));
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+      key = tradingDateKeyEtCore(cursor);
+    }
+    return null;
+  }
+
+  function pctReturn(value, base) {
+    const v = Number(value);
+    const b = Number(base);
+    if (!Number.isFinite(v) || !Number.isFinite(b) || b === 0) return null;
+    return ((v / b) - 1) * 100;
+  }
+
+  function buildBenchmarkComparison({
+    portfolioSnapshots = [],
+    spyBars = [],
+    maxGapMs = MAX_CONNECTED_GAP_MS
+  } = {}) {
+    const ordered = [...(portfolioSnapshots || [])].sort(
+      (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+    );
+    const spyIndex = indexSpyBars(spyBars);
+
+    if (!spyIndex.firstDate) {
+      return {
+        ok: false,
+        reason: 'benchmark_unavailable',
+        message:
+          'SPY benchmark history is unavailable right now (cache empty or market-data budget reached). Try again after the next market session.',
+        portfolioSeries: [],
+        spySeries: [],
+        meta: { spyLabel: SPY_BENCHMARK_LABEL }
+      };
+    }
+
+    if (ordered.length < 2) {
+      return {
+        ok: false,
+        reason: 'insufficient_portfolio',
+        message:
+          'Need at least two recorded portfolio observations in this range to compare percentage returns.',
+        portfolioSeries: [],
+        spySeries: [],
+        meta: {
+          spyLabel: SPY_BENCHMARK_LABEL,
+          spyFirstDate: spyIndex.firstDate,
+          spyLastDate: spyIndex.lastDate
+        }
+      };
+    }
+
+    const aligned = [];
+    const excludedOlder = [];
+    for (const snap of ordered) {
+      const asOfKey = spyAsOfDateKeyForObservation(snap.timestamp);
+      const spy = findSpyCloseOnOrBefore(asOfKey, spyIndex);
+      if (!spy) {
+        excludedOlder.push(snap);
+        continue;
+      }
+      aligned.push({ snap, spy });
+    }
+
+    if (aligned.length < 2) {
+      return {
+        ok: false,
+        reason: 'insufficient_overlap',
+        message:
+          'Portfolio and SPY histories do not overlap enough for a fair comparison. Free-tier SPY history covers about the last 100 trading days — older portfolio points cannot be compared.',
+        portfolioSeries: [],
+        spySeries: [],
+        meta: {
+          spyLabel: SPY_BENCHMARK_LABEL,
+          spyFirstDate: spyIndex.firstDate,
+          spyLastDate: spyIndex.lastDate,
+          excludedOlderCount: excludedOlder.length
+        }
+      };
+    }
+
+    const basePortfolio = Number(aligned[0].snap.portfolioValue);
+    const baseSpy = aligned[0].spy.close;
+    const baseTs = aligned[0].snap.timestamp;
+    const baseSpyDate = aligned[0].spy.date;
+
+    const portfolioSeries = aligned.map(({ snap, spy }) => {
+      const y = pctReturn(snap.portfolioValue, basePortfolio);
+      return {
+        x: new Date(snap.timestamp).getTime(),
+        y,
+        meta: {
+          ...snap,
+          spyAsOfDate: spy.date,
+          spyClose: spy.close,
+          returnPct: y
+        }
+      };
+    });
+
+    const lastSpyDate = aligned[aligned.length - 1].spy.date;
+    const spySeries = [];
+    for (const date of spyIndex.dates) {
+      if (date < baseSpyDate) continue;
+      if (date > lastSpyDate) break;
+      const close = spyIndex.byDate.get(date);
+      const y = pctReturn(close, baseSpy);
+      if (y == null) continue;
+      const [y0, m0, d0] = date.split('-').map(Number);
+      const x = Date.UTC(y0, m0 - 1, d0, 21, 0, 0);
+      spySeries.push({
+        x,
+        y,
+        meta: { kind: 'spy_daily', date, close, returnPct: y }
+      });
+    }
+
+    const excludedNote =
+      excludedOlder.length > 0
+        ? ` ${excludedOlder.length} older portfolio observation(s) fall outside available SPY history and were omitted from this comparison.`
+        : '';
+
+    return {
+      ok: true,
+      reason: null,
+      message:
+        `Both series start at 0% on the first overlapping observation (${tradingDateKeyEtCore(new Date(baseTs))}).${excludedNote}`.trim(),
+      portfolioSeries,
+      spySeries,
+      meta: {
+        spyLabel: SPY_BENCHMARK_LABEL,
+        baseTimestamp: baseTs,
+        baseSpyDate,
+        basePortfolioValue: basePortfolio,
+        baseSpyClose: baseSpy,
+        spyFirstDate: spyIndex.firstDate,
+        spyLastDate: spyIndex.lastDate,
+        excludedOlderCount: excludedOlder.length,
+        maxConnectedGapMs: maxGapMs,
+        portfolioPointCount: portfolioSeries.length,
+        spyPointCount: spySeries.length
+      }
+    };
+  }
+
   return {
     parseMoneyText,
     computePortfolioTotals,
@@ -263,11 +476,15 @@
     DAY_MS,
     MAX_CONNECTED_GAP_MS,
     DEFAULT_CHART_RANGE_MS,
+    SPY_BENCHMARK_LABEL,
     filterSnapshotsByRange,
     analyzeObservationGaps,
     chartSegmentShouldBreak,
     describeSnapshotKind,
     formatLongGapMessage,
-    assessChartRange
+    assessChartRange,
+    buildBenchmarkComparison,
+    pctReturn,
+    spyAsOfDateKeyForObservation
   };
 });

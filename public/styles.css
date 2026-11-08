@@ -989,6 +989,30 @@ input:focus {
   position: relative;
 }
 
+.chart-view-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.75rem;
+}
+
+.chart-view-btn {
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: var(--surface);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.chart-view-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border-color: #99f6e4;
+}
+
 .chart-ranges {
   display: flex;
   flex-wrap: wrap;
@@ -1032,6 +1056,13 @@ input:focus {
   border-color: #f0c28a;
   background: var(--warn-soft);
   color: #7c4a03;
+}
+
+.chart-benchmark-source {
+  margin: -0.35rem 0 0.85rem;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .watchlist-actions {
