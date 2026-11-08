@@ -111,7 +111,7 @@ function buildBenchmarkComparison({
       ok: false,
       reason: 'benchmark_unavailable',
       message:
-        'SPY benchmark history is unavailable right now (cache empty or market-data budget reached). Try again after the next market session.',
+        'S&P 500 comparison data is temporarily unavailable. Please check back after the next market-data refresh.',
       portfolioSeries: [],
       spySeries: [],
       meta: { spyLabel: SPY_BENCHMARK_LABEL }

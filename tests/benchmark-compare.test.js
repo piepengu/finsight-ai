@@ -158,6 +158,10 @@ describe('gaps, sparse history, missing benchmark', () => {
     });
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'benchmark_unavailable');
+    assert.match(
+      result.message,
+      /S&P 500 comparison data is temporarily unavailable\. Please check back after the next market-data refresh\./
+    );
   });
 
   it('reports insufficient portfolio points', () => {

@@ -1541,6 +1541,34 @@ function renderPortfolioCompareChart(filteredSnapshots, assessment) {
         })
       : { ok: false, reason: 'missing_helper', message: 'Comparison helper unavailable.', portfolioSeries: [], spySeries: [] };
 
+  if (!comparison.ok || !comparison.portfolioSeries?.length) {
+    // Keep Portfolio Value ($) intact via ensurePortfolioChartCanvas when switching back;
+    // hide technical source notes while comparison data is missing.
+    const emptyMessage =
+      comparison.message ||
+      'S&P 500 comparison data is temporarily unavailable. Please check back after the next market-data refresh.';
+    const noteParts = [];
+    if (assessment?.message) noteParts.push(assessment.message);
+    // Show the unavailable copy once in the chart frame, not also in the range note.
+    if (comparison.reason !== 'benchmark_unavailable' && comparison.message) {
+      noteParts.push(comparison.message);
+    }
+    setChartRangeNote(noteParts.join(' ') || '', {
+      sparse: !!(assessment?.sparse || !comparison.ok)
+    });
+    setBenchmarkSourceNote('');
+    if (portfolioChart) {
+      try { portfolioChart.destroy(); } catch (_) { /* ignore */ }
+      portfolioChart = null;
+    }
+    canvas.parentElement.insertAdjacentHTML(
+      'afterbegin',
+      `<p class="empty-state">${escapeHtml(emptyMessage)}</p>`
+    );
+    canvas.hidden = true;
+    return;
+  }
+
   const notes = [];
   if (assessment?.message) notes.push(assessment.message);
   if (comparison.message) notes.push(comparison.message);
@@ -1557,19 +1585,6 @@ function renderPortfolioCompareChart(filteredSnapshots, assessment) {
       : asOf}`
     : 'Last updated: unavailable';
   setBenchmarkSourceNote(`Benchmark: ${label}. Source: Alpha Vantage TIME_SERIES_DAILY (compact). ${asOfText}.`);
-
-  if (!comparison.ok || !comparison.portfolioSeries?.length) {
-    if (portfolioChart) {
-      try { portfolioChart.destroy(); } catch (_) { /* ignore */ }
-      portfolioChart = null;
-    }
-    canvas.parentElement.insertAdjacentHTML(
-      'afterbegin',
-      `<p class="empty-state">${escapeHtml(comparison.message || 'Comparison unavailable for this range.')}</p>`
-    );
-    canvas.hidden = true;
-    return;
-  }
 
   const portfolioSeries = comparison.portfolioSeries;
   const spySeries = comparison.spySeries || [];
